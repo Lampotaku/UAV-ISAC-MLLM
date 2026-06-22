@@ -29,7 +29,6 @@ from transformers import get_cosine_schedule_with_warmup, set_seed
 from accelerate import Accelerator
 from tqdm import tqdm
 import json
-import copy
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -131,9 +130,34 @@ def train_stage2(
     )
 
     # ---- Reference Model (冻结, 不更新) ----
-    # 使用 Stage I checkpoint 的 deep copy
-    logger.info("Creating reference model (frozen)...")
-    ref_model = copy.deepcopy(model)
+    # 显式从 Stage I 重新加载，避免 4-bit 量化模型的 deepcopy 显存崩溃风险
+    logger.info("Creating reference model (frozen) by reloading...")
+    ref_model = Gemma3ISAC.from_pretrained(
+        load_dir=stage1_ckpt,
+        base_model_name=model_cfg["backbone"],
+        use_4bit=cfg["hardware"]["use_4bit"],
+        lora_rank=model_cfg["lora"]["rank"],
+        lora_alpha=model_cfg["lora"]["alpha"],
+        lora_dropout=model_cfg["lora"]["dropout"],
+        lora_target_modules=model_cfg["lora"]["target_modules"],
+        num_control_tokens=model_cfg["control_token"]["num_tokens"],
+        proj_head_config={
+            "hidden_dim": model_cfg["control_token"]["hidden_dim"],
+            "num_control_tokens": model_cfg["control_token"]["num_tokens"],
+            "mlp_hidden": model_cfg["projection_head"]["mlp_hidden"],
+            "readout_out_dim": model_cfg["projection_head"]["readout_out_dim"],
+            "M": sim_cfg["num_uavs"],
+            "K": sim_cfg["num_users"],
+            "area_w": sim_cfg["area_size"][0],
+            "area_h": sim_cfg["area_size"][1],
+            "h_min": sim_cfg["altitude_min_m"],
+            "h_max": sim_cfg["altitude_max_m"],
+            "v_max_dt": sim_cfg["uav_max_speed_ms"] * sim_cfg["slot_duration_s"],
+            "p_max": 10 ** ((sim_cfg["p_max_dbm"] - 30) / 10),
+            "K_max": sim_cfg["load_cap_per_uav"],
+        },
+        attn_implementation=model_cfg.get("attn_implementation", "flash_attention_2"),
+    )
     ref_model.eval()
     for param in ref_model.parameters():
         param.requires_grad = False

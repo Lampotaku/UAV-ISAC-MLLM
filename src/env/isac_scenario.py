@@ -107,7 +107,7 @@ class ISACScenarioGenerator:
             uav_pos = state["uav_positions"][m]
             for k in range(self.K):
                 user_pos = state["user_positions"][k]
-                channel_gains[m, k] = self.channel.channel_gain(uav_pos, user_pos)
+                channel_gains[m, k] = self.channel.channel_gain(uav_pos, user_pos, rng=self.rng)
 
         # ---- 计算感知 SINR (M×T) ----
         sensing_sinrs = np.zeros((self.M, self.T), dtype=np.float32)

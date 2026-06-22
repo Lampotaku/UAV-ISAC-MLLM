@@ -12,7 +12,7 @@ UAV-ISAC 信道模型
 """
 
 import numpy as np
-from typing import Tuple
+from typing import Tuple, Optional
 from scipy import constants
 
 
@@ -106,7 +106,8 @@ class ISACChannel:
         return pl_los, pl_nlos
 
     def channel_gain(
-        self, uav_pos_3d: np.ndarray, ground_pos_2d: np.ndarray
+        self, uav_pos_3d: np.ndarray, ground_pos_2d: np.ndarray,
+        rng: Optional[np.random.RandomState] = None,
     ) -> float:
         """
         计算 UAV 到地面节点的信道增益 |h|^2
@@ -116,6 +117,7 @@ class ISACChannel:
         Args:
             uav_pos_3d: [x, y, H] UAV 位置
             ground_pos_2d: [x, y] 地面节点位置
+            rng: 局部随机状态 (保证确定性可复现)
         Returns:
             信道功率增益 (线性)
         """
@@ -131,18 +133,21 @@ class ISACChannel:
         pl_db = p_los * pl_los_db + (1 - p_los) * pl_nlos_db
 
         # 小尺度衰落 (Rician, K-factor 依赖仰角)
-        # 简化: 单位均值瑞利 + LoS 分量
-        k_factor = 10 ** ((10 - horizontal_dist / 100) / 10)  # dB → linear, 随距离衰减
+        k_factor = 10 ** ((10 - horizontal_dist / 100) / 10)  # dB → linear
         los_component = np.sqrt(k_factor / (k_factor + 1))
         nlos_component = np.sqrt(1 / (k_factor + 1))
+
+        # 使用传入的局部生成器或回退到全局生成器
+        gen = rng if rng is not None else np.random
+
         small_scale = np.abs(
             los_component + nlos_component * (
-                np.random.randn() + 1j * np.random.randn()
+                gen.randn() + 1j * gen.randn()
             ) / np.sqrt(2)
         ) ** 2
 
         path_loss_linear = 10 ** (-pl_db / 10)
-        return path_loss_linear * small_scale
+        return float(path_loss_linear * small_scale)
 
     def compute_communication_sinr(
         self,
