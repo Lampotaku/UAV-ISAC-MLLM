@@ -1,0 +1,179 @@
+"""
+PyTorch Dataset 类
+用于 SFT 和 DPO 训练的 DataLoader
+
+对应 train_sft.py 和 train_dpo.py 中的 SFTDataset / DPODataset
+"""
+
+import torch
+from torch.utils.data import Dataset
+import json
+
+
+class SFTDataset(Dataset):
+    """SFT 数据集 (供 train_sft.py 使用)"""
+
+    def __init__(self, data_path: str, tokenizer, max_length: int = 4096,
+                 num_control_tokens: int = 8):
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.num_control_tokens = num_control_tokens
+        self.control_token_ids = tokenizer.convert_tokens_to_ids(
+            [f"<ctrl_{i}>" for i in range(num_control_tokens)]
+        )
+        if any(tid is None or tid == tokenizer.unk_token_id for tid in self.control_token_ids):
+            raise ValueError("Control tokens must be added to the tokenizer before building SFTDataset.")
+
+        self.data = []
+        with open(data_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    self.data.append(json.loads(line))
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        item = self.data[idx]
+        prompt = item["prompt"]
+        response = item["response"]
+
+        # Tokenize
+        prompt_enc = self.tokenizer(prompt, truncation=True,
+                                     max_length=self.max_length - 512)
+        resp_enc = self.tokenizer(response, truncation=True, max_length=512)
+
+        input_ids = (prompt_enc["input_ids"]
+                     + self.control_token_ids
+                     + resp_enc["input_ids"])
+        attention_mask = [1] * len(input_ids)
+        prompt_len = len(prompt_enc["input_ids"])
+        control_len = self.num_control_tokens
+
+        labels = ([-100] * (prompt_len + control_len)
+                  + resp_enc["input_ids"])
+        label_mask = ([0] * (prompt_len + control_len)
+                      + [1] * len(resp_enc["input_ids"]))
+        control_mask = ([0] * prompt_len
+                        + [1] * self.num_control_tokens
+                        + [0] * len(resp_enc["input_ids"]))
+
+        # Padding
+        pad_len = self.max_length - len(input_ids)
+        if pad_len > 0:
+            input_ids += [self.tokenizer.pad_token_id] * pad_len
+            attention_mask += [0] * pad_len
+            labels += [-100] * pad_len
+            label_mask += [0] * pad_len
+            control_mask += [0] * pad_len
+        else:
+            input_ids = input_ids[:self.max_length]
+            attention_mask = attention_mask[:self.max_length]
+            labels = labels[:self.max_length]
+            label_mask = label_mask[:self.max_length]
+            control_mask = control_mask[:self.max_length]
+
+        return {
+            "input_ids": torch.tensor(input_ids, dtype=torch.long),
+            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+            "labels": torch.tensor(labels, dtype=torch.long),
+            "label_mask": torch.tensor(label_mask, dtype=torch.float32),
+            "control_mask": torch.tensor(control_mask, dtype=torch.bool),
+            "q_current": torch.tensor(item.get("q_current", []), dtype=torch.float32),
+            "delta_q_target": torch.tensor(item.get("delta_q", []), dtype=torch.float32),
+            "delta_a_target": torch.tensor(item.get("delta_a", []), dtype=torch.float32),
+            "delta_p_target": torch.tensor(item.get("delta_p", []), dtype=torch.float32),
+        }
+
+
+class DPODataset(Dataset):
+    """DPO 数据集 (供 train_dpo.py 使用)"""
+
+    def __init__(self, data_path: str, tokenizer, max_length: int = 4096,
+                 num_control_tokens: int = 8):
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.num_control_tokens = num_control_tokens
+        self.control_token_ids = tokenizer.convert_tokens_to_ids(
+            [f"<ctrl_{i}>" for i in range(num_control_tokens)]
+        )
+        if any(tid is None or tid == tokenizer.unk_token_id for tid in self.control_token_ids):
+            raise ValueError("Control tokens must be added to the tokenizer before building DPODataset.")
+
+        self.data = []
+        with open(data_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    self.data.append(json.loads(line))
+
+    def __len__(self):
+        return len(self.data)
+
+    def _encode_pair(self, prompt: str, response: str):
+        prompt_enc = self.tokenizer(prompt, truncation=True,
+                                     max_length=self.max_length - 512)
+        resp_enc = self.tokenizer(response, truncation=True, max_length=512)
+
+        input_ids = (prompt_enc["input_ids"]
+                     + self.control_token_ids
+                     + resp_enc["input_ids"])
+        attention_mask = [1] * len(input_ids)
+        prompt_len = len(prompt_enc["input_ids"])
+        control_len = self.num_control_tokens
+
+        labels = ([-100] * (prompt_len + control_len) + resp_enc["input_ids"])
+        label_mask = ([0] * (prompt_len + control_len)
+                      + [1] * len(resp_enc["input_ids"]))
+        control_mask = ([0] * prompt_len
+                        + [1] * self.num_control_tokens
+                        + [0] * len(resp_enc["input_ids"]))
+
+        pad_len = self.max_length - len(input_ids)
+        if pad_len > 0:
+            input_ids += [self.tokenizer.pad_token_id] * pad_len
+            attention_mask += [0] * pad_len
+            labels += [-100] * pad_len
+            label_mask += [0] * pad_len
+            control_mask += [0] * pad_len
+        else:
+            input_ids = input_ids[:self.max_length]
+            attention_mask = attention_mask[:self.max_length]
+            labels = labels[:self.max_length]
+            label_mask = label_mask[:self.max_length]
+            control_mask = control_mask[:self.max_length]
+
+        return {
+            "input_ids": torch.tensor(input_ids, dtype=torch.long),
+            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+            "labels": torch.tensor(labels, dtype=torch.long),
+            "label_mask": torch.tensor(label_mask, dtype=torch.float32),
+            "control_mask": torch.tensor(control_mask, dtype=torch.bool),
+        }
+
+    def __getitem__(self, idx):
+        item = self.data[idx]
+        prompt = item["prompt"]
+        chosen = self._encode_pair(prompt, item["chosen"])
+        rejected = self._encode_pair(prompt, item["rejected"])
+
+        result = {
+            "input_ids_chosen": chosen["input_ids"],
+            "attention_mask_chosen": chosen["attention_mask"],
+            "labels_chosen": chosen["labels"],
+            "label_mask_chosen": chosen["label_mask"],
+            "control_mask_chosen": chosen["control_mask"],
+            "input_ids_rejected": rejected["input_ids"],
+            "attention_mask_rejected": rejected["attention_mask"],
+            "labels_rejected": rejected["labels"],
+            "label_mask_rejected": rejected["label_mask"],
+            "control_mask_rejected": rejected["control_mask"],
+        }
+
+        # Oracle targets for control loss (from winner/best solution)
+        if "delta_q" in item:
+            result["q_current"] = torch.tensor(item.get("q_current", []), dtype=torch.float32)
+            result["delta_q_target"] = torch.tensor(item["delta_q"], dtype=torch.float32)
+            result["delta_a_target"] = torch.tensor(item["delta_a"], dtype=torch.float32)
+            result["delta_p_target"] = torch.tensor(item["delta_p"], dtype=torch.float32)
+
+        return result

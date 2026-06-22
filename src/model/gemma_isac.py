@@ -176,9 +176,10 @@ class Gemma3ISAC(nn.Module):
             control_states = torch.stack(control_states_list, dim=0)  # (B, num_ctrl, hidden_dim)
         else:
             # Fallback: 使用序列末尾的 hidden states (近似)
+            # +1 to include the last control token (Python slice is [start:end) right-exclusive)
             seq_lens = attention_mask.sum(dim=1) - 1
             control_states = torch.stack([
-                hidden_states[b, seq_lens[b] - self.num_control_tokens:seq_lens[b]]
+                hidden_states[b, seq_lens[b] - self.num_control_tokens + 1 : seq_lens[b] + 1]
                 for b in range(hidden_states.shape[0])
             ], dim=0)
 

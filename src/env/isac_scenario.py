@@ -32,6 +32,7 @@ class EnvironmentSample:
     u_positions: np.ndarray       # 用户位置 (K, 2)
     s_positions: np.ndarray       # 目标位置 (T, 2)
     association: np.ndarray       # 当前关联 (M, K)
+    user_weights: np.ndarray      # 用户权重 (K,) — ω_k, 来自 UAVNetwork
 
     # CSI: 所有 UAV-用户链路的信道增益
     channel_gains_users: np.ndarray   # (M, K) — |h_{m,k}|^2
@@ -143,6 +144,7 @@ class ISACScenarioGenerator:
             u_positions=state["user_positions"].copy(),
             s_positions=state["target_positions"].copy(),
             association=state["association"].copy(),
+            user_weights=state["user_weights"].copy(),
             channel_gains_users=channel_gains,
             sensing_sinrs=sensing_sinrs,
             comm_summary=comm_summary,

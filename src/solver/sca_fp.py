@@ -75,6 +75,7 @@ class SCAFPOptimizer:
         K: int = 20,
         T: int = 6,
         N_t: int = 8,
+        N_r: int = None,
         area_size: Tuple[float, float] = (1000.0, 1000.0),
         altitude_range: Tuple[float, float] = (50.0, 300.0),
         p_max: float = 1.0,  # Watts (30dBm)
@@ -86,6 +87,7 @@ class SCAFPOptimizer:
         self.K = K
         self.T = T
         self.N_t = N_t
+        self.N_r = N_r if N_r is not None else N_t  # default: symmetric array
         self.area_w, self.area_h = area_size
         self.H_min, self.H_max = altitude_range
         self.P_max = p_max
@@ -347,7 +349,7 @@ class SCAFPOptimizer:
                         dist_3d = np.sqrt(dist_2d ** 2 + q_new[2] ** 2)
                         pl_db = 20 * np.log10((4 * np.pi * dist_3d) / 0.0517) + 20
                         pl_linear = 10 ** (-pl_db / 10)
-                        sinr_s = P_sense[m] * pl_linear * self.N_t ** 2 / self.N0
+                        sinr_s = P_sense[m] * pl_linear * self.N_t * self.N_r / self.N0
                         obj_sense -= sinr_s
 
                     return obj_comm + self.cfg.lambda_sensing * obj_sense
@@ -468,7 +470,7 @@ class SCAFPOptimizer:
                 dist_3d = np.sqrt(dist_2d ** 2 + Q[m, 2] ** 2)
                 pl_db = 20 * np.log10((4 * np.pi * dist_3d) / 0.0517) + 20
                 pl_linear = 10 ** (-pl_db / 10)
-                sinr_s = P_sense[m] * pl_linear * self.N_t ** 2 / self.N0
+                sinr_s = P_sense[m] * pl_linear * self.N_t * self.N_r / self.N0
                 utility += self.cfg.lambda_sensing * sinr_s
 
         # 闲置惩罚

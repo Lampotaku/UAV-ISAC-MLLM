@@ -140,37 +140,33 @@ class DeploymentProjection(nn.Module):
         """
         B, M, _ = delta_tilde.shape
 
-        # 水平位移裁剪 (移动性约束)
-        displacement_2d = delta_tilde[..., :2]  # (B, M, 2)
-        norms_2d = torch.norm(displacement_2d, dim=-1, keepdim=True) + 1e-8
-        scale_2d = torch.clamp(self.v_max_dt / norms_2d, max=1.0)
-        clipped_2d = displacement_2d * scale_2d
-
-        # 高度变化裁剪
-        dh = delta_tilde[..., 2:3]  # (B, M, 1)
+        # 3D 移动性约束 (论文公式 28): ||Δq||_2 ≤ v_max * Δt
+        # 对整个 3D 位移向量做范数裁剪, 而非仅裁剪水平分量
+        displacement_3d = delta_tilde  # (B, M, 3)
+        norms_3d = torch.norm(displacement_3d, dim=-1, keepdim=True) + 1e-8
+        scale_3d = torch.clamp(self.v_max_dt / norms_3d, max=1.0)
+        clipped_3d = displacement_3d * scale_3d
 
         if q_current is not None:
-            # 从当前位置计算
-            new_pos_2d = q_current[..., :2] + clipped_2d
-            new_pos_h = q_current[..., 2:3] + dh
+            # 从当前位置计算新坐标
+            new_pos = q_current + clipped_3d  # (B, M, 3)
 
-            # 区域裁剪
-            new_pos_2d = torch.stack([
-                torch.clamp(new_pos_2d[..., 0], 0.0, self.area_w),
-                torch.clamp(new_pos_2d[..., 1], 0.0, self.area_h),
+            # 区域裁剪 (x, y)
+            new_pos_xy = torch.stack([
+                torch.clamp(new_pos[..., 0], 0.0, self.area_w),
+                torch.clamp(new_pos[..., 1], 0.0, self.area_h),
             ], dim=-1)
 
             # 高度裁剪
-            new_pos_h = torch.clamp(new_pos_h, self.h_min, self.h_max)
+            new_pos_h = torch.clamp(new_pos[..., 2:3], self.h_min, self.h_max)
 
-            # 转换回位移
-            result_2d = new_pos_2d - q_current[..., :2]
-            result_h = new_pos_h - q_current[..., 2:3]
+            # 拼接后转回位移
+            new_pos_full = torch.cat([new_pos_xy, new_pos_h], dim=-1)
+            result = new_pos_full - q_current
         else:
-            result_2d = clipped_2d
-            result_h = dh
+            result = clipped_3d
 
-        return torch.cat([result_2d, result_h], dim=-1)
+        return result
 
 
 class PowerProjection(nn.Module):
@@ -183,11 +179,13 @@ class PowerProjection(nn.Module):
     保证:
       Σ(通信 + 感知) ≤ P_max
       每个条目 ≥ 0
+      每个通信条目 ≥ p_min (论文公式 21: A_{m,k}||w_{m,k}||² ≥ A_{m,k}P_min)
     """
 
-    def __init__(self, p_max: float = 1.0, tau: float = 0.5):
+    def __init__(self, p_max: float = 1.0, tau: float = 0.5, p_min_ratio: float = 0.01):
         super().__init__()
         self.register_buffer("p_max", torch.tensor(p_max))
+        self.p_min = p_min_ratio * p_max  # absolute floor
         self.tau = tau
 
     def forward(self, p_tilde: torch.Tensor) -> torch.Tensor:
@@ -201,6 +199,7 @@ class PowerProjection(nn.Module):
             p_hat: (B, M, K+1) — 投影后的功率分配
         """
         B, M, D = p_tilde.shape
+        K_comm = D - 1  # number of communication users
 
         # softmax 归一化 (沿最后一维, 即 UAV 内部)
         p_soft = F.softmax(p_tilde / self.tau, dim=-1)  # (B, M, D)
@@ -208,7 +207,26 @@ class PowerProjection(nn.Module):
         # 缩放到功率预算
         p_hat = self.p_max * p_soft
 
-        return p_hat
+        # 通信条目下界钳位 (论文 P_min 约束), 感知条目不受此限
+        p_comm = p_hat[..., :K_comm]  # (B, M, K_comm)
+        p_sense = p_hat[..., K_comm:]  # (B, M, 1)
+
+        # 钳位后重分配: 被钳掉的多余功率均分给其他通信条目
+        floor = self.p_min
+        below_floor = p_comm < floor
+        deficit = (floor - p_comm) * below_floor.float()  # 每个条目缺口
+        total_deficit = deficit.sum(dim=-1, keepdim=True)  # (B, M, 1)
+
+        p_comm = torch.where(below_floor, torch.tensor(floor, device=p_comm.device, dtype=p_comm.dtype), p_comm)
+
+        # 从高于 floor 的条目中扣除 deficit
+        above_floor = p_comm > floor
+        excess = (p_comm - floor) * above_floor.float()
+        total_excess = excess.sum(dim=-1, keepdim=True) + 1e-8
+        scale = torch.clamp(1.0 - total_deficit / total_excess, min=0.0)
+        p_comm = torch.where(above_floor, floor + excess * scale, p_comm)
+
+        return torch.cat([p_comm, p_sense], dim=-1)
 
 
 class AssociationProjection(nn.Module):

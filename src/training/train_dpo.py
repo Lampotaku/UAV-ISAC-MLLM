@@ -59,7 +59,7 @@ def _compute_logprob(
     log_probs = torch.nn.functional.log_softmax(shift_logits, dim=-1)
     per_token_logp = log_probs.gather(-1, safe_labels.unsqueeze(-1)).squeeze(-1)
     masked = per_token_logp * shift_mask
-    seq_logp = masked.sum(dim=-1) / (shift_mask.sum(dim=-1) + 1e-8)
+    seq_logp = masked.sum(dim=-1)  # SUM not mean — DPO needs joint log-prob Σ_t log π(y_t|...)
     return seq_logp
 
 

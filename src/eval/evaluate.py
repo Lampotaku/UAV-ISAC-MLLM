@@ -187,7 +187,7 @@ def _evaluate_one_sample(
         "user_positions": env_sample.u_positions,
         "target_positions": env_sample.s_positions,
         "channel_gains": env_sample.channel_gains_users,
-        "user_weights": np.ones(solver.K),
+        "user_weights": env_sample.user_weights.copy(),  # use actual heterogeneous weights from env
         "association": env_sample.association,
     }
 
@@ -235,9 +235,10 @@ def _evaluate_one_sample(
         for m in range(solver.M):
             dist_2d = np.linalg.norm(sol.Q[m, :2] - env_sample.s_positions[t])
             dist_3d = np.sqrt(dist_2d ** 2 + sol.Q[m, 2] ** 2)
-            pl_db = 20 * np.log10((4 * np.pi * dist_3d) / 0.0517) + 20
+            wavelength = 3e8 / (cfg["simulation"]["carrier_freq_ghz"] * 1e9)
+            pl_db = 20 * np.log10((4 * np.pi * dist_3d) / wavelength) + 20
             pl = 10 ** (-pl_db / 10)
-            sinr_s = sol.W_s_power[m] * pl * solver.N_t ** 2 / solver.N0
+            sinr_s = sol.W_s_power[m] * pl * solver.N_t * solver.N_r / solver.N0
             sensing_sinrs.append(10 * np.log10(sinr_s + 1e-12))
 
     mean_sinr_db = float(np.mean(sensing_sinrs)) if sensing_sinrs else 0.0
@@ -256,7 +257,7 @@ def _evaluate_one_sample(
                     num_satisfied_comm += 1
 
     num_total_associated = int(np.sum(sol.A > 0.5))
-    comm_sat = num_satisfied_comm / max(num_total_associated, 1)
+    comm_sat = num_satisfied_comm / max(solver.K, 1)  # 分母=总用户数, 避免"只服务1个用户=100%"的刷榜漏洞
 
     num_satisfied_sense = 0
     num_targets = solver.T  # s_positions is always shape (T, 2); use solver.T directly
@@ -269,7 +270,7 @@ def _evaluate_one_sample(
             wavelength = 3e8 / (cfg["simulation"]["carrier_freq_ghz"] * 1e9)
             pl_db = 20 * np.log10((4 * np.pi * dist_3d) / wavelength) + 20
             pl = 10 ** (-pl_db / 10)
-            sinr_s = sol.W_s_power[m] * pl * solver.N_t ** 2 / solver.N0
+            sinr_s = sol.W_s_power[m] * pl * solver.N_t * solver.N_r / solver.N0
             sinr_s_db = 10 * np.log10(sinr_s + 1e-12)
             if sinr_s_db > best_sinr_db:
                 best_sinr_db = sinr_s_db
