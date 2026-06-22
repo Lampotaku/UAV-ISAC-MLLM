@@ -76,6 +76,7 @@ class SCAFPOptimizer:
         T: int = 6,
         N_t: int = 8,
         N_r: int = None,
+        carrier_freq_ghz: float = 5.8,
         area_size: Tuple[float, float] = (1000.0, 1000.0),
         altitude_range: Tuple[float, float] = (50.0, 300.0),
         p_max: float = 1.0,  # Watts (30dBm)
@@ -88,6 +89,8 @@ class SCAFPOptimizer:
         self.T = T
         self.N_t = N_t
         self.N_r = N_r if N_r is not None else N_t  # default: symmetric array
+        self.carrier_freq_ghz = carrier_freq_ghz
+        self.wavelength = 3e8 / (carrier_freq_ghz * 1e9)  # dynamic wavelength from carrier freq
         self.area_w, self.area_h = area_size
         self.H_min, self.H_max = altitude_range
         self.P_max = p_max
@@ -158,6 +161,9 @@ class SCAFPOptimizer:
             if self.cfg.verbose:
                 print(f"  SCA-FP iter {outer_iter}: utility = {utility:.4f}")
 
+            # NaN guard: break early if utility diverges (numerical instability)
+            if not np.isfinite(utility):
+                break
             if abs(utility - prev_utility) < self.cfg.tol:
                 break
             prev_utility = utility
@@ -335,8 +341,8 @@ class SCAFPOptimizer:
                             continue
                         dist_2d = np.linalg.norm(q_new[:2] - user_positions[k])
                         dist_3d = np.sqrt(dist_2d ** 2 + q_new[2] ** 2)
-                        # 简化路径损耗模型
-                        pl_db = 28 + 22 * np.log10(max(dist_3d, 1.0))
+                        # 3GPP UMa LoS: PL = 28 + 22*log10(d_3D) + 20*log10(f_c)
+                        pl_db = 28 + 22 * np.log10(max(dist_3d, 1.0)) + 20 * np.log10(self.carrier_freq_ghz)
                         pl_linear = 10 ** (-pl_db / 10)
                         sinr = P_comm[m, k] * pl_linear / self.N0
                         obj_comm -= np.log2(1 + sinr)
@@ -347,7 +353,7 @@ class SCAFPOptimizer:
                         t_pos = target_positions[t]
                         dist_2d = np.linalg.norm(q_new[:2] - t_pos)
                         dist_3d = np.sqrt(dist_2d ** 2 + q_new[2] ** 2)
-                        pl_db = 20 * np.log10((4 * np.pi * dist_3d) / 0.0517) + 20
+                        pl_db = 20 * np.log10((4 * np.pi * max(dist_3d, 1.0)) / self.wavelength) + 20
                         pl_linear = 10 ** (-pl_db / 10)
                         sinr_s = P_sense[m] * pl_linear * self.N_t * self.N_r / self.N0
                         obj_sense -= sinr_s
@@ -468,7 +474,7 @@ class SCAFPOptimizer:
             for m in range(self.M):
                 dist_2d = np.linalg.norm(Q[m, :2] - t_pos)
                 dist_3d = np.sqrt(dist_2d ** 2 + Q[m, 2] ** 2)
-                pl_db = 20 * np.log10((4 * np.pi * dist_3d) / 0.0517) + 20
+                pl_db = 20 * np.log10((4 * np.pi * max(dist_3d, 1.0)) / self.wavelength) + 20
                 pl_linear = 10 ** (-pl_db / 10)
                 sinr_s = P_sense[m] * pl_linear * self.N_t * self.N_r / self.N0
                 utility += self.cfg.lambda_sensing * sinr_s

@@ -141,6 +141,8 @@ def main():
         K=sim_cfg["num_users"],
         T=sim_cfg["num_targets"],
         N_t=sim_cfg["num_antennas_tx"],
+        N_r=sim_cfg.get("num_antennas_rx", sim_cfg["num_antennas_tx"]),
+        carrier_freq_ghz=sim_cfg["carrier_freq_ghz"],
         area_size=tuple(sim_cfg["area_size"]),
         altitude_range=(sim_cfg["altitude_min_m"], sim_cfg["altitude_max_m"]),
         p_max=10 ** ((sim_cfg["p_max_dbm"] - 30) / 10),

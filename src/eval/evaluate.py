@@ -73,15 +73,24 @@ def run_evaluation(
         verbose=False,
     )
 
+    # 计算正确的噪声功率 (与 generate_data.py 保持一致)
+    noise_power = 10 ** (
+        (-174 + 10 * np.log10(sim_cfg["bandwidth_mhz"] * 1e6)
+         + sim_cfg["noise_figure_db"] - 30) / 10
+    )
+
     solver = SCAFPOptimizer(
         config=solver_cfg,
         M=sim_cfg["num_uavs"],
         K=sim_cfg["num_users"],
         T=sim_cfg["num_targets"],
         N_t=sim_cfg["num_antennas_tx"],
+        N_r=sim_cfg.get("num_antennas_rx", sim_cfg["num_antennas_tx"]),
+        carrier_freq_ghz=sim_cfg["carrier_freq_ghz"],
         area_size=tuple(sim_cfg["area_size"]),
         altitude_range=(sim_cfg["altitude_min_m"], sim_cfg["altitude_max_m"]),
         p_max=10 ** ((sim_cfg["p_max_dbm"] - 30) / 10),
+        noise_power=noise_power,
         load_cap=sim_cfg["load_cap_per_uav"],
     )
 
@@ -227,7 +236,7 @@ def _evaluate_one_sample(
                     * sol.W_c_power[m, k]
                     / (solver.N0 + 1e-12)
                 )
-                sum_rate += 20e6 * np.log2(1 + sinr)  # B=20MHz
+                sum_rate += cfg["simulation"]["bandwidth_mhz"] * 1e6 * np.log2(1 + sinr)
 
     # Sensing SINR
     sensing_sinrs = []
