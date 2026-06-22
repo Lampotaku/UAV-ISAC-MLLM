@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+
+# IDE / Editor
+.vscode/
+.idea/
+
+# Claude
+.claude/
+
+# Training outputs
+outputs/
+checkpoints/
+logs/
+runs/
+wandb/
+
+# Data (generated, should not be in repo)
+data/
+*.jsonl
+
+# Models (downloaded)
+models/
+huggingface/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+*.secret
+论文.txt

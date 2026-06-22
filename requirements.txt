@@ -1,0 +1,23 @@
+# Core — CUDA 12.8+ for RTX 5090 Blackwell (sm_120)
+torch>=2.7.0                 # First stable with sm_120 support
+transformers==4.49.0
+peft==0.14.0                  # For checkpoint loading (Unsloth handles QLoRA training)
+accelerate==1.3.0
+trl==0.15.0
+datasets==3.2.0
+unsloth                       # Blackwell-compatible 4-bit QLoRA (replaces bitsandbytes)
+
+# Flash Attention — official may fail on Blackwell; fallback to community fork
+# pip install flash-attn --no-build-isolation
+# or: pip install https://huggingface.co/SecondNatureComputing/flash-attn-4-sm120/...
+
+# Scientific
+numpy>=1.26
+scipy>=1.13
+matplotlib>=3.9
+pyyaml>=6.0
+tqdm>=4.66
+
+# Optional (for full BEV image rendering when multimodal)
+# pillow>=10.0
+# opencv-python>=4.9

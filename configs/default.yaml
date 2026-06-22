@@ -1,0 +1,145 @@
+# ==========================================================================
+# Constraint-Aware MLLM for UAV-ISAC — 主配置文件
+# 硬件目标: RTX 5090 32GB @ AutoDL
+# ==========================================================================
+
+# ---- 硬件 / 训练 ----
+# RTX 5090 32GB (Blackwell sm_120) — CUDA 12.8+
+# 使用 Unsloth 替代 bitsandbytes (Unsloth 内置 Blackwell 优化内核)
+hardware:
+  gpu: "RTX 5090"
+  vram_gb: 32
+  use_4bit: true            # QLoRA 4-bit (Unsloth)
+  gradient_checkpointing: true
+  max_grad_norm: 1.0
+
+  # 如果 flash-attn 不可用, 改为 sdpa:
+  # attn_fallback: "sdpa"
+
+training:
+  seed: 42
+  # Stage I: SFT
+  sft:
+    epochs: 3
+    per_device_batch_size: 1
+    gradient_accumulation_steps: 16   # 有效 batch ≈ 16
+    learning_rate: 2.0e-4
+    lr_scheduler: "cosine"
+    warmup_ratio: 0.03
+    weight_decay: 0.01
+    max_seq_length: 4096
+    save_steps: 200
+    logging_steps: 10
+
+  # Stage II: DPO
+  dpo:
+    epochs: 2
+    per_device_batch_size: 1
+    gradient_accumulation_steps: 16
+    learning_rate: 5.0e-5
+    lr_scheduler: "cosine"
+    warmup_ratio: 0.03
+    beta: 0.1                    # DPO temperature (论文值)
+    mu: 0.05                     # SFT anchor 系数 (防遗忘)
+    max_seq_length: 4096
+    save_steps: 200
+    logging_steps: 10
+
+# ---- 模型 ----
+model:
+  backbone: "google/gemma-3-12b-it"   # Gemma 3 12B Instruct
+  use_multimodal: false                # 先用文本版验证, 后续切换为 true
+  torch_dtype: "bfloat16"
+  attn_implementation: "flash_attention_2"  # 优先 FA2; 不可用时改为 "sdpa"
+
+  lora:
+    rank: 16                # 论文 r=16
+    alpha: 32               # 论文 α=32
+    dropout: 0.05
+    target_modules:         # Gemma 3 的 attention 线性层
+      - "q_proj"
+      - "k_proj"
+      - "v_proj"
+      - "o_proj"
+
+  # Control Token
+  control_token:
+    num_tokens: 8           # 保留的控制 token 数量
+    hidden_dim: 3840        # Gemma 3 12B 的 hidden_size
+
+  # Projection Head
+  projection_head:
+    hidden_dim: 3840
+    mlp_hidden: [256, 256]   # 两层 hidden MLP
+    readout_out_dim: 128     # 读出投影
+    tau_power: 0.5           # softmax temperature (功率)
+    tau_assoc: 0.5           # Sinkhorn temperature (关联)
+    sinkhorn_iters: 20       # Sinkhorn 迭代次数
+
+  # Loss weights
+  loss:
+    lambda_ctl: 0.5          # 控制 loss 权重 (论文 λ_ctl)
+    lambda_q: 1.0            # 位移 loss
+    lambda_a: 0.5            # 关联 loss
+    lambda_p: 0.3            # 功率 loss
+    lambda_sep: 0.1          # 分离惩罚 (论文 λ_sep)
+
+# ---- 仿真环境 ----
+simulation:
+  area_size: [1000, 1000]    # m² (论文 1000×1000)
+  num_uavs: 4                # M = 4
+  num_users: 20              # K = 20
+  num_targets: 6             # T = 6
+  num_antennas_tx: 8         # N_t
+  num_antennas_rx: 8         # N_r
+  carrier_freq_ghz: 5.8      # f_c
+  bandwidth_mhz: 20          # B
+  p_max_dbm: 30              # P_m^max
+  noise_figure_db: 9
+  altitude_min_m: 50         # H_min
+  altitude_max_m: 300        # H_max
+  uav_min_separation_m: 10   # d_min
+  uav_max_speed_ms: 15       # v_max
+  slot_duration_s: 1.0       # Δt
+  sinr_c_min_db: 0           # Γ_c^min
+  sinr_s_min_db: 10          # Γ_s^min
+  rate_min_bps: 1e6          # R_k^min
+  load_cap_per_uav: 10       # K_m^max
+
+# ---- 数据生成 ----
+data:
+  num_environments: 5000     # S = 5000 (论文值)
+  num_restarts: 10           # N = 10   (论文值)
+  pair_margin_rho: 0.2       # ρ = 0.2  (论文值)
+  dpo_min_pairs_per_sample: 2
+
+  # 模态配置 (文本版验证阶段)
+  modalities:
+    use_comm_summary: true
+    use_sensing_summary: true
+    use_bev_text_grid: true     # 文本版: 用文本网格替代图像
+    use_bev_image: false        # 图像版: 需要 Gemma3 多模态权重
+
+  # 数据输出
+  output_dir: "./data/cache"
+  sft_file: "sft_dataset.jsonl"
+  dpo_file: "dpo_dataset.jsonl"
+
+# ---- 评估 ----
+eval:
+  num_test_environments: 200
+  baseline_list:
+    - "csi_only"              # B1
+    - "isac_sca"              # B2
+    - "drl_assisted"          # B3
+    - "single_modal_frozen"   # B4
+    - "moe_baseline"          # B5
+    - "frozen_prompting"      # B6 (论文主要对比)
+    - "sft_only"              # B7
+    - "dpo_only"              # B8
+    - "sft_dpo_no_head"       # B9
+
+# ---- 输出 ----
+output_dir: "./outputs"
+checkpoint_dir: "./checkpoints"
+log_dir: "./logs"
