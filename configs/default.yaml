@@ -121,7 +121,7 @@ data:
     use_bev_image: false        # 图像版: 需要 Gemma3 多模态权重
 
   # 数据输出
-  output_dir: "./data/cache"
+  output_dir: "/root/autodl-tmp/data/cache"
   sft_file: "sft_dataset.jsonl"
   dpo_file: "dpo_dataset.jsonl"
 
@@ -140,6 +140,6 @@ eval:
     - "sft_dpo_no_head"       # B9
 
 # ---- 输出 ----
-output_dir: "./outputs"
-checkpoint_dir: "./checkpoints"
-log_dir: "./logs"
+output_dir: "/root/autodl-tmp/outputs"
+checkpoint_dir: "/root/autodl-tmp/checkpoints"
+log_dir: "/root/autodl-tmp/logs"
