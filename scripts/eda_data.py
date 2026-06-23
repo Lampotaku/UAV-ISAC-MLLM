@@ -23,20 +23,57 @@ def hdr(s):   return f"{BOLD}{s}{RESET}"
 def info(s):  return f"{CYAN}{s}{RESET}"
 
 
-# ── Config (mirrors default.yaml) ──────────────────
-CFG = {
-    "M": 4, "K": 20, "T": 6,
-    "area_size": [1000, 1000],
-    "h_range": [50, 300],
-    "v_max": 15,
-    "slot_duration": 1.0,
-    "p_max_W": 1.0,          # 30 dBm = 1W
-    "K_max": 10,
-    "max_seq_length": 4096,
-    "control_tokens": 8,
-    "prompt_budget": 4096 - 1024,   # prompt truncated to max_seq_length - 1024
-    "response_budget": 1024,
-}
+# ── Config (优先从 default.yaml 读取, 回退到硬编码默认值) ──────────────────
+def _load_config(config_path=None):
+    """从 YAML 配置加载仿真参数; 文件缺失或键缺失时回退到硬编码默认值"""
+    # 默认值 (mirrors default.yaml simulation + training sections)
+    cfg = {
+        "M": 4, "K": 20, "T": 6,
+        "area_size": [1000, 1000],
+        "h_range": [50, 300],
+        "v_max": 15,
+        "slot_duration": 1.0,
+        "p_max_W": 1.0,          # 30 dBm = 1W
+        "K_max": 10,
+        "max_seq_length": 4096,
+        "control_tokens": 8,
+        "prompt_budget": 4096 - 1024,
+        "response_budget": 1024,
+    }
+
+    if config_path and os.path.exists(config_path):
+        try:
+            import yaml
+            with open(config_path, "r", encoding="utf-8") as f:
+                yc = yaml.safe_load(f)
+
+            sim = yc.get("simulation", {})
+            train = yc.get("training", {}).get("sft", {})
+            model = yc.get("model", {}).get("control_token", {})
+
+            cfg["M"] = sim.get("num_uavs", cfg["M"])
+            cfg["K"] = sim.get("num_users", cfg["K"])
+            cfg["T"] = sim.get("num_targets", cfg["T"])
+            cfg["area_size"] = sim.get("area_size", cfg["area_size"])
+            cfg["h_range"] = [
+                sim.get("altitude_min_m", cfg["h_range"][0]),
+                sim.get("altitude_max_m", cfg["h_range"][1]),
+            ]
+            cfg["v_max"] = sim.get("uav_max_speed_ms", cfg["v_max"])
+            cfg["slot_duration"] = sim.get("slot_duration_s", cfg["slot_duration"])
+            p_max_dbm = sim.get("p_max_dbm", 30)
+            cfg["p_max_W"] = 10 ** ((p_max_dbm - 30) / 10)
+            cfg["K_max"] = sim.get("load_cap_per_uav", cfg["K_max"])
+            cfg["max_seq_length"] = train.get("max_seq_length", cfg["max_seq_length"])
+            cfg["control_tokens"] = model.get("num_tokens", cfg["control_tokens"])
+            cfg["prompt_budget"] = cfg["max_seq_length"] - 1024
+        except Exception:
+            pass  # 任何 YAML 解析问题都静默回退到默认值
+
+    return cfg
+
+
+CFG = _load_config()  # 模块加载时用默认值; main() 中可覆盖
 
 
 def estimate_tokens(text: str) -> int:
@@ -539,7 +576,14 @@ def main():
     parser = argparse.ArgumentParser(description="Data EDA before training")
     parser.add_argument("--data-dir", type=str, default="/root/autodl-tmp/data/full5000",
                         help="Path to data directory")
+    parser.add_argument("--config", type=str, default=None,
+                        help="Path to default.yaml (overrides hardcoded simulation params)")
     args = parser.parse_args()
+
+    # Reload CFG from YAML if --config provided
+    if args.config:
+        global CFG
+        CFG = _load_config(args.config)
 
     sft_path = os.path.join(args.data_dir, "sft_dataset.jsonl")
     dpo_path = os.path.join(args.data_dir, "dpo_dataset.jsonl")

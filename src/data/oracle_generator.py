@@ -226,9 +226,11 @@ class OracleDataGenerator:
         # Round to 4 decimal places (0.1mm) — drastically reduces token count
         # for BPE tokenizers that fragment high-precision floats like 0.1910400390625
         # into 5-8 subword tokens each. 4 decimals is ~10μm, well below UAV control limits.
-        return (np.round(delta_q, 4).astype(np.float32),
-                np.round(delta_a, 4).astype(np.float32),
-                np.round(delta_p, 4).astype(np.float32))
+        # .astype(np.float32) removed: np.round already produces clean 4-decimal values;
+        # downstream JSON serialization strips the dtype anyway.
+        return (np.round(delta_q, 4),
+                np.round(delta_a, 4),
+                np.round(delta_p, 4))
 
     def _env_sample_to_dict(self, env_sample: EnvironmentSample) -> Dict:
         """将 EnvironmentSample 转换为 solver 期望的 dict 格式"""
