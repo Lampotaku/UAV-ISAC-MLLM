@@ -73,6 +73,29 @@ def _count_existing(filepath):
     return count
 
 
+def _read_checkpoint(ckpt_path):
+    """读取 checkpoint 文件, 返回已完成的环境数 (批次边界)"""
+    if not os.path.exists(ckpt_path):
+        return 0
+    try:
+        with open(ckpt_path, "r", encoding="utf-8") as f:
+            return int(f.read().strip())
+    except (ValueError, OSError):
+        return 0
+
+
+def _atomic_merge_batch(tmp_path, main_path):
+    """将临时批次文件追加到主文件 (容错: 若主文件不存在则创建)"""
+    if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
+        return
+    with open(tmp_path, "r", encoding="utf-8") as src:
+        with open(main_path, "a", encoding="utf-8") as dst:
+            for line in src:
+                if line.strip():
+                    dst.write(line)
+    os.remove(tmp_path)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate UAV-ISAC training data (resumable)")
     parser.add_argument("--config", type=str, default="configs/default.yaml")
@@ -119,10 +142,14 @@ def main():
     ckpt_path = os.path.join(output_dir, "checkpoint.txt")
 
     # ---- 断点续跑 ----
-    existing_sft = _count_existing(sft_path)
-    start_env = existing_sft  # SFT 每环境一条, 所以已有条数=已完成环境数
+    # 多进程模式: 用 checkpoint 文件 (批次边界, 安全)
+    # 顺序模式:   用 SFT 行数 (逐环境顺序写入, 可靠)
+    if n_workers > 0:
+        start_env = _read_checkpoint(ckpt_path)
+    else:
+        start_env = _count_existing(sft_path)
     if start_env > 0:
-        print(f"[RESUME] Found {existing_sft} existing SFT samples, resuming from env {start_env}")
+        print(f"[RESUME] Resuming from env {start_env}")
     if start_env >= num_envs:
         print(f"All {num_envs} environments already done! Exiting.")
         return
@@ -196,7 +223,11 @@ def main():
     print(f"\nGenerating envs {start_env}..{num_envs-1}...\n")
 
     t_start = time.time()
-    n_sft, n_dpo = start_env, _count_existing(dpo_path)
+    n_sft, n_dpo = _count_existing(sft_path), _count_existing(dpo_path)
+
+    # NameError 防护: 在循环前初始化 (Bug 3)
+    batch_end = start_env
+    i = start_env - 1
 
     # 批次大小: 多进程用 save_every, 顺序用 1
     batch_size = args.save_every if n_workers > 0 else 1
@@ -210,6 +241,11 @@ def main():
 
         if n_workers > 0:
             # ── 多进程并发模式 ──
+            # 写入临时文件, 批次完成后原子合并 → 防止 mid-batch 崩溃导致
+            # 部分 JSONL 行被 _count_existing 误读为 "已完成"
+            tmp_sft = sft_path + f".batch_{batch_start}_{batch_end}.tmp"
+            tmp_dpo = dpo_path + f".batch_{batch_start}_{batch_end}.tmp"
+
             batch_t0 = time.time()
             batch_sft, batch_dpo = 0, 0
 
@@ -220,21 +256,38 @@ def main():
                 }
 
                 for future in as_completed(future_to_id):
+                    # Ctrl+C / SIGTERM 检查 — 不再无视中断 (Bug 2)
+                    if _stop_requested:
+                        # 取消尚未开始的所有 future, 不等待运行中的
+                        for f in future_to_id:
+                            f.cancel()
+                        break
+
                     i = future_to_id[future]
                     try:
                         sft_sample, dpo_samples = future.result()
                         if sft_sample is not None:
-                            _incremental_append(sft_path, sft_sample)
+                            _incremental_append(tmp_sft, sft_sample)
                             n_sft += 1
                             batch_sft += 1
                             for d in dpo_samples:
-                                _incremental_append(dpo_path, d)
+                                _incremental_append(tmp_dpo, d)
                                 n_dpo += 1
                                 batch_dpo += 1
                     except Exception as e:
                         print(f"\n  [ERROR] env {i}: {e}")
 
-            # 批次完成 → checkpoint
+            # 若被中断则跳过合并 + checkpoint (下次从本批次起点续跑)
+            if _stop_requested:
+                # 清理临时文件: 未完成的批次数据丢弃 (下次重跑)
+                for tmp in [tmp_sft, tmp_dpo]:
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
+                break
+
+            # 批次完成 → 原子合并 + checkpoint
+            _atomic_merge_batch(tmp_sft, sft_path)
+            _atomic_merge_batch(tmp_dpo, dpo_path)
             with open(ckpt_path, "w") as f:
                 f.write(f"{batch_end}\n")
 

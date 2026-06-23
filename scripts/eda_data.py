@@ -12,7 +12,6 @@ import os
 import sys
 import argparse
 import numpy as np
-from collections import defaultdict
 
 # ── Colour ──────────────────────────────────────────
 GREEN = "\033[92m"; RED = "\033[91m"; YELLOW = "\033[93m"
@@ -41,7 +40,13 @@ CFG = {
 
 
 def estimate_tokens(text: str) -> int:
-    """粗略估算 token 数: 英文 ~4 chars/token, 数字/JSON ~3 chars/token"""
+    """粗略估算 token 数: 英文 ~4 chars/token, 数字/JSON ~3 chars/token
+
+    ⚠️ 警告: 此启发式低估 Gemma 3 SentencePiece token 数 ~3.3×
+    (实测: 启发式 ~500 vs 真实 1678, 见 Doc #13)。
+    仅用于相对比较, 不应作为截断判断的唯一依据。
+    建议用真实 tokenizer (AutoTokenizer) 做最终验证。
+    """
     alpha_chars = sum(1 for c in text if c.isalpha() or c == ' ')
     other_chars = len(text) - alpha_chars
     return int(alpha_chars / 4 + other_chars / 2.5)
@@ -347,6 +352,17 @@ def check_diversity(sft_path):
     da = np.array(all_da)   # (N, M, K)
     qc = np.array(all_qc)   # (N, M, 3)
 
+    # 空数据保护 (Bug 6: 如果 SFT 文件无有效记录, 避免 IndexError)
+    if dq.ndim < 2 or dq.shape[0] == 0:
+        print(f"  {warn('⚠ No valid SFT records found — skipping diversity check')}")
+        return {
+            "issues": ["no valid records"],
+            "over_budget": 0,
+            "overloaded": 0,
+            "negative_power": 0,
+            "zero_power_pct": 0,
+        }
+
     N, M = dq.shape[0], dq.shape[1]
     K = CFG["K"]
 
@@ -357,12 +373,21 @@ def check_diversity(sft_path):
 
     bins = [0, 2, 5, 8, 10, 12, 13, 14, 14.5, 14.9, 15.0, 15.1]
     hist, edges = np.histogram(dq_flat, bins=bins)
-    max_bar = 40
     print(f"    Mean={dq_flat.mean():.2f}m  Std={dq_flat.std():.2f}m")
     print(f"    Min={dq_flat.min():.2f}m  Max={dq_flat.max():.2f}m")
     print(f"    % at exactly 15.0m: {100*(dq_flat >= 14.99).mean():.1f}%")
     print(f"    % in [14.5, 15.0]: {100*((dq_flat >= 14.5) & (dq_flat <= 15.0)).mean():.1f}%")
     print(f"    % < 10m: {100*(dq_flat < 10).mean():.1f}%")
+
+    # Histogram — detect mode collapse at v_max boundary
+    bin_labels = ["0-2", "2-5", "5-8", "8-10", "10-12", "12-13", "13-14", "14-14.5", "14.5-14.9", "14.9-15", ">15"]
+    max_bar = 40
+    print(f"    Displacement histogram (‖Δq‖₂ bins):")
+    for lbl, cnt in zip(bin_labels, hist):
+        pct = 100 * cnt / len(dq_flat)
+        bar = "█" * min(int(cnt / max(hist) * max_bar), max_bar) if max(hist) > 0 else ""
+        flag = fail("  ← MODE COLLAPSE at v_max boundary") if ">15" in lbl and cnt > 0 else ""
+        print(f"      {lbl:>10s}: {pct:5.1f}% {bar}{flag}")
 
     # ── 3.2 δ_q 方向分布 ──
     print(hdr(f"\n  ── 3.2 δ_q Direction Distribution ──"))

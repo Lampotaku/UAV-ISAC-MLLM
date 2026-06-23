@@ -183,6 +183,8 @@ class OracleDataGenerator:
                     "prompt": prompt,
                     "chosen": chosen,
                     "rejected": rejected,
+                    "utility_chosen": float(utilities[j]),
+                    "utility_rejected": float(utilities[jj]),
                     "utility_gap": float(gap),
                     # Oracle targets (from winner) for control loss
                     "q_current": env_sample.q_current.tolist(),
