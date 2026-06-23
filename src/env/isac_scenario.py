@@ -7,7 +7,6 @@ ISAC 场景生成器
 """
 
 import numpy as np
-import torch
 from typing import Tuple, Dict, Optional
 from dataclasses import dataclass
 

@@ -11,7 +11,6 @@ UAV-ISAC 网络拓扑与状态管理
 """
 
 import numpy as np
-import torch
 from dataclasses import dataclass, field
 from typing import Tuple, Optional
 

@@ -69,7 +69,7 @@ def main():
     args = parser.parse_args()
 
     # 加载配置
-    with open(os.path.join(PROJECT_ROOT, args.config), "r") as f:
+    with open(os.path.join(PROJECT_ROOT, args.config), "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
     sim_cfg = cfg["simulation"]
