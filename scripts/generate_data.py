@@ -317,7 +317,9 @@ def main():
                 print(f"\n[ERROR] env {i}: {e}")
 
             # 进度输出
-            if (i - start_env + 1) % args.save_every == 0 or i == start_env:
+            # 小批量 (≤10): 每个 env 都打印，避免 smoke test 静默恐慌
+            per_env = num_envs - start_env <= 10
+            if per_env or (i - start_env + 1) % args.save_every == 0 or i == start_env:
                 elapsed = time.time() - t_start
                 done = i - start_env + 1
                 rate = elapsed / done
