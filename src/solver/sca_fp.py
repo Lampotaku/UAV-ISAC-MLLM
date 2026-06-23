@@ -204,13 +204,15 @@ class SCAFPOptimizer:
         Q = q_current.copy()
         max_disp = self.max_displacement  # v_max * Δt (15m)
         for m in range(M):
-            # 水平位移: 随机方向 + 随机幅度在 [0, max_disp] 内
-            angle = self.rng.uniform(0, 2 * np.pi)
-            mag = self.rng.uniform(0, max_disp)
-            Q[m, 0] += mag * np.cos(angle)
-            Q[m, 1] += mag * np.sin(angle)
-            # 垂直位移
-            Q[m, 2] += self.rng.uniform(-max_disp, max_disp)
+            # 3D 球形均匀采样: 方向均匀 + 半径均匀, 保证 ‖Δq‖₂ ≤ max_disp
+            # Box 采样 (per-axis 独立) 会产生对角线超出 (√3·15≈26m), 违反物理约束
+            phi = self.rng.uniform(0, 2 * np.pi)
+            cos_theta = self.rng.uniform(-1, 1)
+            theta = np.arccos(cos_theta)
+            r = self.rng.uniform(0, max_disp)
+            Q[m, 0] += r * np.sin(theta) * np.cos(phi)
+            Q[m, 1] += r * np.sin(theta) * np.sin(phi)
+            Q[m, 2] += r * np.cos(theta)
 
         # Clamp 到区域/硬件约束
         Q[:, 0] = np.clip(Q[:, 0], 0, self.area_w)
@@ -251,12 +253,12 @@ class SCAFPOptimizer:
 
         # 位移累加
         delta_q = np.array(warm_start.get("delta_q", np.zeros((self.M, 3))))
-        # Clamp displacement to movement constraint v_max * Δt
-        delta_q_horiz = np.linalg.norm(delta_q[:, :2], axis=1, keepdims=True)
+        # Clamp displacement to movement constraint v_max * Δt (3D Euclidean sphere)
+        # 保持方向不变, 将 3D 范数裁剪到 max_disp 以内
         max_disp = self.max_displacement
-        scale = np.where(delta_q_horiz > max_disp, max_disp / (delta_q_horiz + 1e-12), 1.0)
-        delta_q[:, :2] *= scale
-        delta_q[:, 2] = np.clip(delta_q[:, 2], -max_disp, max_disp)
+        delta_q_norm = np.linalg.norm(delta_q, axis=1, keepdims=True)
+        scale = np.where(delta_q_norm > max_disp, max_disp / (delta_q_norm + 1e-12), 1.0)
+        delta_q *= scale
         Q = current_Q + delta_q
 
         # Clamp 区域/硬件约束
@@ -386,7 +388,19 @@ class SCAFPOptimizer:
                         sinr_s = P_sense[m] * pl_linear * self.N_t * self.N_r / self.N0
                         obj_sense -= sinr_s
 
-                    return obj_comm + self.cfg.lambda_sensing * obj_sense
+                    obj = obj_comm + self.cfg.lambda_sensing * obj_sense
+
+                    # 3D 球形移动约束惩罚 (切掉 Box bounds 的八个角)
+                    # L-BFGS-B bounds 只能做 per-axis 独立约束 → 搜索空间是正方体
+                    # 物理约束是 ‖Δq‖₂ ≤ v_max*Δt → 可行域是球体
+                    # 正方体的角 (Δx=±15, Δy=±15, Δz=±15) 的 3D 距离达 √675≈26m
+                    # 惩罚项确保优化器不会逃逸到球外
+                    q_cur_m = q_current[m]
+                    dist_moved = np.linalg.norm(q_new - q_cur_m)
+                    if dist_moved > max_disp:
+                        obj += 1e5 * (dist_moved - max_disp) ** 2
+
+                    return obj
 
                 # L-BFGS-B 优化 m-th UAV
                 # 约束: 区域边界 与 移动性约束 (v_max * Δt) 的交集

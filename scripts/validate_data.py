@@ -120,12 +120,13 @@ def validate_prior(item, idx, cfg):
         elif not np.all(np.isfinite(dq)):
             issues.append(f"L{idx}: delta_q 含 NaN/Inf")
         else:
-            dq_horiz = np.linalg.norm(dq[:, :2], axis=1)  # (M,) horizontal displacement
-            dq_vert  = np.abs(dq[:, 2])                     # (M,) vertical displacement
-            if dq_horiz.max() > v_max_dt * 2:
-                issues.append(f"L{idx}: delta_q 水平位移 max={dq_horiz.max():.1f}m > 2*v_max*Δt={v_max_dt*2:.1f}m")
-            if dq_vert.max() > v_max_dt * 2:
-                issues.append(f"L{idx}: delta_q 垂直位移 max={dq_vert.max():.1f}m > 2*v_max*Δt={v_max_dt*2:.1f}m")
+            dq_3d = np.linalg.norm(dq, axis=1)  # (M,) 3D Euclidean displacement
+            # 物理约束: ‖Δq‖₂ ≤ v_max * Δt (球体, 非正方体 — Box bounds 的角可超 √3·15≈26m)
+            if dq_3d.max() > v_max_dt + 1e-3:  # 1e-3 容忍浮点误差
+                issues.append(
+                    f"L{idx}: delta_q 3D位移 max={dq_3d.max():.1f}m "
+                    f"超出物理约束 v_max*Δt={v_max_dt}m"
+                )
 
     # --- delta_a ---
     da = np.array(item.get("delta_a", []))
@@ -168,12 +169,10 @@ def compute_stats(sft_records, dpo_records, cfg):
     # SFT
     if sft_records:
         dq_all = np.array([r["delta_q"] for r in sft_records])  # (N, M, 3)
-        dq_horiz = np.linalg.norm(dq_all[:, :, :2], axis=2)      # (N, M)
-        dq_vert  = np.abs(dq_all[:, :, 2])                        # (N, M)
+        dq_3d = np.linalg.norm(dq_all, axis=2)                   # (N, M) 3D Euclidean
         stats["sft"] = {
             "count": len(sft_records),
-            "delta_q_horiz": {"min": dq_horiz.min(), "mean": dq_horiz.mean(), "max": dq_horiz.max()},
-            "delta_q_vert":  {"min": dq_vert.min(),  "mean": dq_vert.mean(),  "max": dq_vert.max()},
+            "delta_q_3d": {"min": float(dq_3d.min()), "mean": float(dq_3d.mean()), "max": float(dq_3d.max())},
         }
 
     # DPO
@@ -192,7 +191,7 @@ def compute_stats(sft_records, dpo_records, cfg):
     return stats
 
 
-def print_summary(stats, issues_total):
+def print_summary(stats, issues_total, max_displacement):
     """打印人类可读的统计摘要"""
     print()
     print(hdr("─" * 60))
@@ -202,10 +201,9 @@ def print_summary(stats, issues_total):
     if "sft" in stats:
         s = stats["sft"]
         print(f"\n  {hdr('SFT Samples')}: {s['count']}")
-        print(f"    δ_q 水平位移:  mean={s['delta_q_horiz']['mean']:.1f}m  "
-              f"[{s['delta_q_horiz']['min']:.1f}, {s['delta_q_horiz']['max']:.1f}]")
-        print(f"    δ_q 垂直位移:  mean={s['delta_q_vert']['mean']:.1f}m  "
-              f"[{s['delta_q_vert']['min']:.1f}, {s['delta_q_vert']['max']:.1f}]")
+        print(f"    δ_q 3D位移 (‖Δq‖₂):  mean={s['delta_q_3d']['mean']:.1f}m  "
+              f"[{s['delta_q_3d']['min']:.1f}, {s['delta_q_3d']['max']:.1f}]  "
+              f"(上限={max_displacement:.0f}m)")
 
     if "dpo" in stats:
         d = stats["dpo"]
@@ -318,7 +316,7 @@ def main():
             if len(all_issues) > args.max_issues:
                 print(f"    ... and {len(all_issues) - args.max_issues} more")
 
-        print_summary(stats, len(all_issues))
+        print_summary(stats, len(all_issues), cfg['v_max'] * cfg['slot_duration'])
 
         if args.watch <= 0:
             break
