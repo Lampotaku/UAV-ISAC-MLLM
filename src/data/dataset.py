@@ -39,24 +39,30 @@ class SFTDataset(Dataset):
         response = item["response"]
 
         # Tokenize
+        # Response budget: 1024 tokens (JSON with 176 floats needs ~824 tokens)
         prompt_enc = self.tokenizer(prompt, truncation=True,
-                                     max_length=self.max_length - 512)
-        resp_enc = self.tokenizer(response, truncation=True, max_length=512)
+                                     max_length=self.max_length - 1024)
+        # add_special_tokens=False prevents duplicate <bos> in the middle of
+        # the sequence; we manually append <eos> so the model learns to stop
+        # after the JSON closes instead of generating garbage at inference.
+        resp_enc = self.tokenizer(response, truncation=True, max_length=1024,
+                                  add_special_tokens=False)
+        resp_ids = resp_enc["input_ids"] + [self.tokenizer.eos_token_id]
 
         input_ids = (prompt_enc["input_ids"]
                      + self.control_token_ids
-                     + resp_enc["input_ids"])
+                     + resp_ids)
         attention_mask = [1] * len(input_ids)
         prompt_len = len(prompt_enc["input_ids"])
         control_len = self.num_control_tokens
 
-        labels = ([-100] * (prompt_len + control_len)
-                  + resp_enc["input_ids"])
+        # labels use resp_ids (with <eos>) so the model learns to emit <eos>
+        labels = ([-100] * (prompt_len + control_len) + resp_ids)
         label_mask = ([0] * (prompt_len + control_len)
-                      + [1] * len(resp_enc["input_ids"]))
+                      + [1] * len(resp_ids))
         control_mask = ([0] * prompt_len
                         + [1] * self.num_control_tokens
-                        + [0] * len(resp_enc["input_ids"]))
+                        + [0] * len(resp_ids))
 
         # Padding
         pad_len = self.max_length - len(input_ids)
@@ -111,22 +117,27 @@ class DPODataset(Dataset):
 
     def _encode_pair(self, prompt: str, response: str):
         prompt_enc = self.tokenizer(prompt, truncation=True,
-                                     max_length=self.max_length - 512)
-        resp_enc = self.tokenizer(response, truncation=True, max_length=512)
+                                     max_length=self.max_length - 1024)
+        # add_special_tokens=False prevents duplicate <bos> in the middle of
+        # the sequence; we manually append <eos> so the model learns to stop.
+        resp_enc = self.tokenizer(response, truncation=True, max_length=1024,
+                                  add_special_tokens=False)
+        resp_ids = resp_enc["input_ids"] + [self.tokenizer.eos_token_id]
 
         input_ids = (prompt_enc["input_ids"]
                      + self.control_token_ids
-                     + resp_enc["input_ids"])
+                     + resp_ids)
         attention_mask = [1] * len(input_ids)
         prompt_len = len(prompt_enc["input_ids"])
         control_len = self.num_control_tokens
 
-        labels = ([-100] * (prompt_len + control_len) + resp_enc["input_ids"])
+        # labels use resp_ids (with <eos>) so the model learns to emit <eos>
+        labels = ([-100] * (prompt_len + control_len) + resp_ids)
         label_mask = ([0] * (prompt_len + control_len)
-                      + [1] * len(resp_enc["input_ids"]))
+                      + [1] * len(resp_ids))
         control_mask = ([0] * prompt_len
                         + [1] * self.num_control_tokens
-                        + [0] * len(resp_enc["input_ids"]))
+                        + [0] * len(resp_ids))
 
         pad_len = self.max_length - len(input_ids)
         if pad_len > 0:
