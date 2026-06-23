@@ -35,8 +35,8 @@ CFG = {
     "K_max": 10,
     "max_seq_length": 4096,
     "control_tokens": 8,
-    "prompt_budget": 4096 - 512,   # prompt truncated to max_seq_length - 512
-    "response_budget": 512,
+    "prompt_budget": 4096 - 1024,   # prompt truncated to max_seq_length - 1024
+    "response_budget": 1024,
 }
 
 
