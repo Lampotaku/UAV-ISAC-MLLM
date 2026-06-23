@@ -156,4 +156,6 @@ def format_oracle_response(sample_id: int, delta_q, delta_a, delta_p) -> str:
         "delta_p": _trunc(np.round(delta_p, 4).tolist()),
     }
 
-    return json.dumps(response_dict, indent=2)
+    # Compact JSON — no indent. With 176 floats, indent=2 adds ~1400 chars
+    # of whitespace/newlines that BPE tokenizer wastes tokens on (>200 tokens).
+    return json.dumps(response_dict, indent=None, separators=(",", ":"))
