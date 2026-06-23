@@ -416,7 +416,7 @@ class SCAFPOptimizer:
                     Q[m],
                     method="L-BFGS-B",
                     bounds=bounds,
-                    options={"maxiter": 20, "disp": False},
+                    options={"maxiter": 20},
                 )
                 Q[m] = res.x
 
