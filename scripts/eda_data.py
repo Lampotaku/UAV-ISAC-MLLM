@@ -125,31 +125,35 @@ def check_format_and_length(sft_path, dpo_path):
                 except Exception as e:
                     print(f"  {fail(f'Response not valid JSON: {e}')}")
 
-    # ---- DPO (spot check) ----
+    # ---- DPO line count (fast — no JSON parse) ----
     dpo_count = 0
-    dpo_truncated = 0
+    with open(dpo_path, "r", encoding="utf-8") as f:
+        for _ in f:
+            dpo_count += 1
+
+    # ---- DPO spot check (parse first 5 only) ----
     with open(dpo_path, "r", encoding="utf-8") as f:
         for i, line in enumerate(f, 1):
             line = line.strip()
             if not line:
                 continue
-            dpo_count += 1
+            if i > 5:
+                break
             try:
                 data = json.loads(line)
             except json.JSONDecodeError:
                 malformed_json += 1
                 continue
 
-            if i <= 2:
-                prompt = data.get("prompt", "")
-                chosen = data.get("chosen", "")
-                rejected = data.get("rejected", "")
-                p_tok = estimate_tokens(prompt)
-                c_tok = estimate_tokens(chosen)
-                r_tok = estimate_tokens(rejected)
-                print(hdr(f"\n  ── DPO Sample {i} ──"))
-                print(f"  Prompt: ~{p_tok} tokens | Chosen: ~{c_tok} tokens | Rejected: ~{r_tok} tokens")
-                print(f"  Utility gap: {data.get('utility_gap', 'N/A')}")
+            prompt = data.get("prompt", "")
+            chosen = data.get("chosen", "")
+            rejected = data.get("rejected", "")
+            p_tok = estimate_tokens(prompt)
+            c_tok = estimate_tokens(chosen)
+            r_tok = estimate_tokens(rejected)
+            print(hdr(f"\n  ── DPO Sample {i} ──"))
+            print(f"  Prompt: ~{p_tok} tokens | Chosen: ~{c_tok} tokens | Rejected: ~{r_tok} tokens")
+            print(f"  Utility gap: {data.get('utility_gap', 'N/A')}")
 
     # ---- Summary ----
     sft_lengths = np.array(sft_lengths)
