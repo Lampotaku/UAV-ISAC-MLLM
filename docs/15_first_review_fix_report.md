@@ -1,8 +1,8 @@
 # 第十五号文档 — feature/multiprocessing 一审修复完成报告
 
 > 修复时间: 2026-06-24 | 来源: Doc #14 一审发现 | 严重级别: P0–P2
-> 状态: ✅ 已修复并推送 | Commit: `a27bc04`
-> 影响: 5 files, +509/-18 (含 Doc #14 正文)
+> 状态: ✅ 全部修复已推送 | Commits: `a27bc04` (P0–P2) + `ee6352d` (Q1/Q3/Q4/Q5 cleanup)
+> 影响: 10 files, +656/-134 (含 Doc #14 正文)
 
 ---
 
@@ -23,7 +23,7 @@
 
 ## 一句话概述
 
-**对 Doc #14 一审发现的 5 个确认 Bug (1 P0 + 2 P1 + 2 P2) 和 EDA 工具的 3 个微修复全部落地，4 个源文件 +118/-18 行，Python 语法编译通过，逻辑路径逐行审查通过，已推送至 `feature/multiprocessing` (`a27bc04`)。**
+**对 Doc #14 一审发现的 5 个确认 Bug (1 P0 + 2 P1 + 2 P2) 和 EDA 工具的 3 个微修复全部落地 (`a27bc04`)。后续 Q1/Q3/Q4/Q5 四项清理修复亦已完成 (`ee6352d`)，共涉及 10 个文件 +656/-134 行，Python 语法编译全通，逻辑路径逐行审查通过，已推送至 `feature/multiprocessing`。**
 
 ---
 
@@ -329,20 +329,21 @@ validate_dpo_sample(item, 1, cfg)  # → 检测到 "utility_gap <= 0" ✅
 
 ## 未修复项 (后续优化)
 
-以下 Doc #14 发现的问题未纳入本次修复 (非阻塞、无数据丢失风险):
+以下 Doc #14 发现的问题最初未纳入 `a27bc04` 修复，随后在 `ee6352d` 全部清理:
 
-| 发现 | 原因 |
-|------|------|
-| Q1: SFT/DPO 重复 tokenization | 重构风险, 可在单独 PR 中抽取 `_tokenize()` |
-| Q3: EDA 硬编码 CFG | 需引入 yaml 依赖 + 路径约定, 训练前完成即可 |
-| Q4: BLAS 线程抑制仅在 generate_data.py | 训练脚本未实际运行过多进程 DataLoader 验证, 后续补 |
-| Q5: 双重舍入 | 纯优化, 8000 万次 round() 在 1.5h 运行中占比微乎其微 |
-| Bug 5: seed=None 确定性 | 无调用方, 低优先级 |
-| Bug 6: EDA 空文件 (已修) | ✅ |
+| 发现 | 原状态 | 修复 Commit | 修复摘要 |
+|------|--------|-------------|---------|
+| Q1: SFT/DPO 重复 tokenization | ✅ 已修复 | `ee6352d` | 提取 `_tokenize_pair()` 共享函数，SFTDataset/DPODataset 共用，消除 ~30 行重复 |
+| Q3: EDA 硬编码 CFG | ✅ 已修复 | `ee6352d` | 新增 `_load_config(config_path)` 从 `default.yaml` 读取仿真参数，`--config` 命令行接入，硬编码默认值做 fallback |
+| Q4: BLAS 线程抑制缺失 | ✅ 已修复 | `ee6352d` | `train_sft.py` + `train_dpo.py` 在 `import torch` 前设置 5 个 `*_NUM_THREADS=1` 环境变量 |
+| Q5: 双重舍入冗余 | ✅ 已修复 | `ee6352d` | `_extract_prior` 移除无用 `.astype(np.float32)`，`np.round(4)` 已产出干净值 |
+| Bug 5: seed=None 确定性 | ⏳ 未修复 | — | 无调用方, 低优先级 |
 
 ---
 
 ## 文件变更清单
+
+### Commit `a27bc04` — P0/P1/P2 关键修复
 
 | 文件 | 变更类型 | 关键改动 |
 |------|---------|---------|
@@ -352,7 +353,15 @@ validate_dpo_sample(item, 1, cfg)  # → 检测到 "utility_gap <= 0" ✅
 | `scripts/eda_data.py` | Bug 修复 | 空数据保护 + 移除 dead `defaultdict` import + 补全位移直方图 + `estimate_tokens` 警告 |
 | `docs/14_first_review_post_datagen.md` | 新文件 | Doc #14 — 一审完整事后分析 (391 行) |
 
-**Commit**: `a27bc04` — 已推送至 `origin/feature/multiprocessing`
+### Commit `ee6352d` — Q1/Q3/Q4/Q5 清理修复
+
+| 文件 | 变更类型 | 关键改动 |
+|------|---------|---------|
+| `src/data/dataset.py` | 重构 (Q1) | 提取 `_tokenize_pair()` 共享函数，SFTDataset/DPODataset 去重 ~30 行 |
+| `scripts/eda_data.py` | 重构 (Q3) | `_load_config(config_path)` 从 yaml 读取仿真参数，消除硬编码 CFG |
+| `src/training/train_sft.py` | Bug 修复 (Q4) | `import torch` 前设置 `OMP/MKL/OPENBLAS_NUM_THREADS=1` |
+| `src/training/train_dpo.py` | Bug 修复 (Q4) | 同上，与 `train_sft.py` 保持一致 |
+| `src/data/oracle_generator.py` | 优化 (Q5) | 移除 `_extract_prior` 中冗余 `.astype(np.float32)` |
 
 ---
 
@@ -362,4 +371,4 @@ validate_dpo_sample(item, 1, cfg)  # → 检测到 "utility_gap <= 0" ✅
 > - [Doc #11 — P0 EDA 双 Bug 事后分析](11_pre_training_data_eda_postmortem.md)
 > - [Doc #10 — P0 物理约束穿透 Bug](10_physical_constraint_bug_postmortem.md)
 >
-> **审查 Commit**: `619abcc` → **修复 Commit**: `a27bc04`
+> **审查 Commit**: `619abcc` → **关键修复 Commit**: `a27bc04` → **清理修复 Commit**: `ee6352d`
