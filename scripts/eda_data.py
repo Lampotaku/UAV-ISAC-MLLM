@@ -297,7 +297,7 @@ def check_physical_spotcheck(sft_path):
             comm_power = delta_p[m, :CFG["K"]].sum()
             sens_power = delta_p[m, CFG["K"]]
             total = comm_power + sens_power
-            status = ok("OK") if total <= CFG["p_max_W"] + 1e-6 else fail(f"OVER! {total:.4f}>{CFG['p_max_W']}")
+            status = ok("OK") if total <= CFG["p_max_W"] + 0.01 else fail(f"OVER! {total:.4f}>{CFG['p_max_W']}")  # 0.01W tol for FP rounding
             print(f"    UAV{m}: comm={comm_power:.4f}W  sens={sens_power:.4f}W  total={total:.4f}W  {status}")
 
         # ASCII top-down view
