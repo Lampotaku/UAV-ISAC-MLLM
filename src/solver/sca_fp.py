@@ -209,8 +209,8 @@ class SCAFPOptimizer:
             mag = self.rng.uniform(0, max_disp)
             Q[m, 0] += mag * np.cos(angle)
             Q[m, 1] += mag * np.sin(angle)
-            # 垂直位移: 较小 (通常 UAV 高度调整比水平慢)
-            Q[m, 2] += self.rng.uniform(-max_disp * 0.5, max_disp * 0.5)
+            # 垂直位移
+            Q[m, 2] += self.rng.uniform(-max_disp, max_disp)
 
         # Clamp 到区域/硬件约束
         Q[:, 0] = np.clip(Q[:, 0], 0, self.area_w)
@@ -256,7 +256,7 @@ class SCAFPOptimizer:
         max_disp = self.max_displacement
         scale = np.where(delta_q_horiz > max_disp, max_disp / (delta_q_horiz + 1e-12), 1.0)
         delta_q[:, :2] *= scale
-        delta_q[:, 2] = np.clip(delta_q[:, 2], -max_disp * 0.5, max_disp * 0.5)
+        delta_q[:, 2] = np.clip(delta_q[:, 2], -max_disp, max_disp)
         Q = current_Q + delta_q
 
         # Clamp 区域/硬件约束
@@ -395,7 +395,7 @@ class SCAFPOptimizer:
                 bounds = [
                     (max(0.0, q0[0] - max_disp), min(self.area_w, q0[0] + max_disp)),       # x
                     (max(0.0, q0[1] - max_disp), min(self.area_h, q0[1] + max_disp)),       # y
-                    (max(self.H_min, q0[2] - max_disp * 0.5), min(self.H_max, q0[2] + max_disp * 0.5)),  # H
+                    (max(self.H_min, q0[2] - max_disp), min(self.H_max, q0[2] + max_disp)),  # H
                 ]
                 res = minimize(
                     objective,

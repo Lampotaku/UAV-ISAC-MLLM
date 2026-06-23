@@ -92,6 +92,8 @@ def run_evaluation(
         p_max=10 ** ((sim_cfg["p_max_dbm"] - 30) / 10),
         noise_power=noise_power,
         load_cap=sim_cfg["load_cap_per_uav"],
+        v_max=sim_cfg.get("uav_max_speed_ms", 15),
+        slot_duration=sim_cfg.get("slot_duration_s", 1.0),
     )
 
     # ---- 加载模型 (如果提供) ----
