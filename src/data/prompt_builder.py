@@ -8,6 +8,7 @@ Prompt 构造器
   - BEV 地图 V(t): 文本网格或图像
   - 系统指令: 优化目标 + 约束说明 + 输出格式
 """
+import numpy as np
 
 
 SYSTEM_INSTRUCTION = """You are a UAV-ISAC decision controller for low-altitude IoT networks.
@@ -138,9 +139,9 @@ def format_oracle_response(sample_id: int, delta_q, delta_a, delta_p) -> str:
     import json
 
     response_dict = {
-        "delta_q": delta_q.tolist(),
-        "delta_a": delta_a.tolist(),
-        "delta_p": delta_p.tolist(),
+        "delta_q": np.round(delta_q, 4).tolist(),
+        "delta_a": np.round(delta_a, 4).tolist(),
+        "delta_p": np.round(delta_p, 4).tolist(),
     }
 
     return json.dumps(response_dict, indent=2)
