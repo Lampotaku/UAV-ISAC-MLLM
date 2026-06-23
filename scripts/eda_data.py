@@ -213,7 +213,7 @@ def check_format_and_length(sft_path, dpo_path):
 # SECTION 2: 物理常识 & 3D 场景可视化
 # ====================================================================
 
-def ascii_topdown(q_current, u_pos, s_pos, delta_q, area_w=1000, area_h=1000):
+def ascii_topdown(q_current, delta_q, u_pos=None, s_pos=None, area_w=1000, area_h=1000):
     """打印 40×40 的 ASCII 俯视图"""
     grid_w, grid_h = 40, 40
     canvas = [["·" for _ in range(grid_w)] for _ in range(grid_h)]
@@ -223,30 +223,38 @@ def ascii_topdown(q_current, u_pos, s_pos, delta_q, area_w=1000, area_h=1000):
         gy = int(np.clip(y / area_h * grid_h, 0, grid_h - 1))
         return gx, grid_h - 1 - gy  # flip Y for display
 
-    # Users: 'U'
-    for ux, uy in u_pos[:, :2]:
-        gx, gy = to_grid(ux, uy)
-        canvas[gy][gx] = info("U")
+    # Users: 'U' (if available)
+    if u_pos is not None:
+        for ux, uy in u_pos[:, :2]:
+            gx, gy = to_grid(ux, uy)
+            canvas[gy][gx] = info("U")
 
-    # Targets: 'T'
-    for sx, sy in s_pos[:, :2]:
-        gx, gy = to_grid(sx, sy)
-        if canvas[gy][gx] == "·":
-            canvas[gy][gx] = warn("T")
-        else:
-            canvas[gy][gx] = "?"  # overlap
+    # Targets: 'T' (if available)
+    if s_pos is not None:
+        for sx, sy in s_pos[:, :2]:
+            gx, gy = to_grid(sx, sy)
+            if canvas[gy][gx] == "·":
+                canvas[gy][gx] = warn("T")
+            else:
+                canvas[gy][gx] = "?"  # overlap
 
     # UAV starts: '0','1','2','3'
     for m in range(len(q_current)):
         gx, gy = to_grid(q_current[m, 0], q_current[m, 1])
         canvas[gy][gx] = str(m)
 
-    # UAV destinations: '◈' (diamond)
+    # UAV destinations: arrow from start
     for m in range(len(delta_q)):
+        sx, sy = to_grid(q_current[m, 0], q_current[m, 1])
         dx, dy = q_current[m, 0] + delta_q[m, 0], q_current[m, 1] + delta_q[m, 1]
         gx, gy = to_grid(dx, dy)
-        if canvas[gy][gx] in "·UT?" or canvas[gy][gx] == str(m):
-            canvas[gy][gx] = ok("◈")
+        # Mark destination with direction arrow
+        arrows = {(-1,-1):"↙", (-1,0):"←", (-1,1):"↖", (0,-1):"↓", (0,1):"↑", (1,-1):"↘", (1,0):"→", (1,1):"↗"}
+        dir_x = 1 if gx > sx else (-1 if gx < sx else 0)
+        dir_y = 1 if gy > sy else (-1 if gy < sy else 0)
+        arrow = arrows.get((dir_x, dir_y), "◆")
+        if canvas[gy][gx] in "·" or canvas[gy][gx] == str(m):
+            canvas[gy][gx] = ok(arrow)
 
     return "\n".join("".join(row) for row in canvas)
 
@@ -294,7 +302,7 @@ def check_physical_spotcheck(sft_path):
 
         # ASCII top-down view
         print(f"\n  {info('Top-Down View (U=user, T=target, 0-3=UAV start, ◈=UAV dest):')}")
-        print(f"    " + ascii_topdown(q_current, u_pos=None, s_pos=None, delta_q=delta_q).replace("\n", "\n    "))
+        print(f"    " + ascii_topdown(q_current, delta_q).replace("\n", "\n    "))
 
         # Altitude view
         print(f"\n  {info('Altitude Profile:')}")
