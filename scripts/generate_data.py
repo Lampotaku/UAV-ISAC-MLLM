@@ -186,7 +186,7 @@ def main():
             print(f"\n[ERROR] env {i}: {e}")
             continue
 
-        # 进度输出 + 定期 checkpoint
+        # 进度输出: save_every 触发详细报告 + checkpoint, 其余环境每 10 个轻量报告
         if (i - start_env + 1) % args.save_every == 0 or i == start_env:
             elapsed = time.time() - t_start
             done = i - start_env + 1
@@ -198,6 +198,13 @@ def main():
             # 写 checkpoint
             with open(ckpt_path, "w") as f:
                 f.write(f"{i+1}\n")
+        elif (i - start_env + 1) % 10 == 0:
+            elapsed = time.time() - t_start
+            done = i - start_env + 1
+            rate = elapsed / done
+            remaining = (num_envs - i - 1) * rate
+            print(f"  [{i+1}/{num_envs}] {n_sft} SFT, {n_dpo} DPO | "
+                  f"{elapsed:.0f}s elapsed, ~{remaining/3600:.1f}h remaining", flush=True)
 
     elapsed = time.time() - t_start
     print(f"\n{'=' * 60}")
