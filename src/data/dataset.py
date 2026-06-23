@@ -39,9 +39,10 @@ class SFTDataset(Dataset):
         response = item["response"]
 
         # Tokenize
+        # Response budget: 1024 tokens (JSON with 176 floats needs ~890 tokens)
         prompt_enc = self.tokenizer(prompt, truncation=True,
-                                     max_length=self.max_length - 512)
-        resp_enc = self.tokenizer(response, truncation=True, max_length=512)
+                                     max_length=self.max_length - 1024)
+        resp_enc = self.tokenizer(response, truncation=True, max_length=1024)
 
         input_ids = (prompt_enc["input_ids"]
                      + self.control_token_ids
@@ -111,8 +112,8 @@ class DPODataset(Dataset):
 
     def _encode_pair(self, prompt: str, response: str):
         prompt_enc = self.tokenizer(prompt, truncation=True,
-                                     max_length=self.max_length - 512)
-        resp_enc = self.tokenizer(response, truncation=True, max_length=512)
+                                     max_length=self.max_length - 1024)
+        resp_enc = self.tokenizer(response, truncation=True, max_length=1024)
 
         input_ids = (prompt_enc["input_ids"]
                      + self.control_token_ids
