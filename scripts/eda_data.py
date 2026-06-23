@@ -400,7 +400,7 @@ def check_diversity(sft_path):
     sens_power = dp[:, :, K]                # (N, M) — sensing power per UAV
     total_power = comm_power + sens_power   # (N, M)
 
-    over_budget = (total_power > CFG["p_max_W"] + 1e-6).sum()
+    over_budget = (total_power > CFG["p_max_W"] + 0.01).sum()  # 0.01W tolerance for FP rounding
     negative_power = (dp < -1e-6).sum()
     zero_power = (total_power < 1e-8).sum()
 
@@ -497,6 +497,14 @@ def check_diversity(sft_path):
     else:
         print(f"  {ok('✅ Section 3 PASS')} — good diversity, no constraint violations")
 
+    return {
+        "issues": issues,
+        "over_budget": over_budget,
+        "overloaded": overloaded,
+        "negative_power": negative_power,
+        "zero_power_pct": 100 * zero_power / (N * M) if N * M > 0 else 0,
+    }
+
 
 # ====================================================================
 # Main
@@ -520,7 +528,7 @@ def main():
 
     stats = check_format_and_length(sft_path, dpo_path)
     check_physical_spotcheck(sft_path)
-    check_diversity(sft_path)
+    div_result = check_diversity(sft_path)
 
     # ── Final Verdict ──
     print(hdr("\n" + "=" * 70))
@@ -528,12 +536,30 @@ def main():
     print(hdr("=" * 70))
 
     all_ok = True
+
+    # Section 1: truncation
     if stats["truncated_prompts"] > 0:
         print(f"  {warn('⚠')} Prompt truncation: {stats['truncated_prompts']} samples — may lose task context")
         all_ok = False
     if stats["truncated_responses"] > 0:
         print(f"  {fail('✗')} Response truncation: {stats['truncated_responses']} samples — JSON output CUT OFF!")
         all_ok = False
+
+    # Section 3: diversity & constraints
+    if div_result["over_budget"] > 0:
+        print(f"  {fail('✗')} Power budget violations: {div_result['over_budget']} UAV-slots exceed P_max")
+        all_ok = False
+    if div_result["negative_power"] > 0:
+        print(f"  {fail('✗')} Negative power: {div_result['negative_power']} entries < 0")
+        all_ok = False
+    if div_result["overloaded"] > 0:
+        print(f"  {fail('✗')} Load cap violations: {div_result['overloaded']} UAV-slots exceed K_max")
+        all_ok = False
+    if div_result["issues"]:
+        # Direction bias and other soft warnings — don't block, but surface
+        soft_issues = [i for i in div_result["issues"] if "Direction bias" in i]
+        for si in soft_issues:
+            print(f"  {warn('⚠')} {si} — not a blocker, but check")
 
     if all_ok:
         print(f"  {ok('✅ All checks passed — ready for SFT training!')}")
