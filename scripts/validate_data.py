@@ -124,8 +124,8 @@ def validate_prior(item, idx, cfg):
             dq_vert  = np.abs(dq[:, 2])                     # (M,) vertical displacement
             if dq_horiz.max() > v_max_dt * 2:
                 issues.append(f"L{idx}: delta_q 水平位移 max={dq_horiz.max():.1f}m > 2*v_max*Δt={v_max_dt*2:.1f}m")
-            if dq_vert.max() > 50:
-                issues.append(f"L{idx}: delta_q 垂直位移 max={dq_vert.max():.1f}m > 50m")
+            if dq_vert.max() > v_max_dt * 2:
+                issues.append(f"L{idx}: delta_q 垂直位移 max={dq_vert.max():.1f}m > 2*v_max*Δt={v_max_dt*2:.1f}m")
 
     # --- delta_a ---
     da = np.array(item.get("delta_a", []))

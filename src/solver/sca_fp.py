@@ -82,6 +82,8 @@ class SCAFPOptimizer:
         p_max: float = 1.0,  # Watts (30dBm)
         noise_power: float = 1e-12,
         load_cap: int = 10,
+        v_max: float = 15.0,
+        slot_duration: float = 1.0,
     ):
         self.cfg = config
         self.M = M
@@ -96,6 +98,9 @@ class SCAFPOptimizer:
         self.P_max = p_max
         self.N0 = noise_power
         self.K_max = load_cap
+        self.v_max = v_max
+        self.slot_duration = slot_duration
+        self.max_displacement = v_max * slot_duration  # 15m per slot
 
         self.rng = np.random.RandomState()
 
@@ -186,15 +191,31 @@ class SCAFPOptimizer:
     # ================================================================
 
     def _random_init(self, env: Dict) -> Tuple:
-        """生成随机初始点"""
-        M, K = self.M, self.K
+        """
+        生成随机初始点
 
-        # UAV 位置
-        Q = np.zeros((M, 3))
+        从当前 UAV 位置 q_current 出发，在移动约束 v_max * Δt 内随机扰动。
+        物理上 UAV 不能瞬移 — 每个时间槽最多移动 v_max * Δt 米。
+        """
+        M, K = self.M, self.K
+        q_current = env.get("q_current", np.zeros((M, 3)))
+
+        # UAV 位置: q_current + 有界随机扰动
+        Q = q_current.copy()
+        max_disp = self.max_displacement  # v_max * Δt (15m)
         for m in range(M):
-            Q[m, 0] = self.rng.uniform(0.1 * self.area_w, 0.9 * self.area_w)
-            Q[m, 1] = self.rng.uniform(0.1 * self.area_h, 0.9 * self.area_h)
-            Q[m, 2] = self.rng.uniform(self.H_min + 20, self.H_max - 20)
+            # 水平位移: 随机方向 + 随机幅度在 [0, max_disp] 内
+            angle = self.rng.uniform(0, 2 * np.pi)
+            mag = self.rng.uniform(0, max_disp)
+            Q[m, 0] += mag * np.cos(angle)
+            Q[m, 1] += mag * np.sin(angle)
+            # 垂直位移: 较小 (通常 UAV 高度调整比水平慢)
+            Q[m, 2] += self.rng.uniform(-max_disp * 0.5, max_disp * 0.5)
+
+        # Clamp 到区域/硬件约束
+        Q[:, 0] = np.clip(Q[:, 0], 0, self.area_w)
+        Q[:, 1] = np.clip(Q[:, 1], 0, self.area_h)
+        Q[:, 2] = np.clip(Q[:, 2], self.H_min, self.H_max)
 
         # 关联: 最近 UAV
         A = np.zeros((M, K), dtype=np.float32)
@@ -230,9 +251,15 @@ class SCAFPOptimizer:
 
         # 位移累加
         delta_q = np.array(warm_start.get("delta_q", np.zeros((self.M, 3))))
+        # Clamp displacement to movement constraint v_max * Δt
+        delta_q_horiz = np.linalg.norm(delta_q[:, :2], axis=1, keepdims=True)
+        max_disp = self.max_displacement
+        scale = np.where(delta_q_horiz > max_disp, max_disp / (delta_q_horiz + 1e-12), 1.0)
+        delta_q[:, :2] *= scale
+        delta_q[:, 2] = np.clip(delta_q[:, 2], -max_disp * 0.5, max_disp * 0.5)
         Q = current_Q + delta_q
 
-        # Clamp 约束
+        # Clamp 区域/硬件约束
         Q[:, 2] = np.clip(Q[:, 2], self.H_min, self.H_max)
         Q[:, 0] = np.clip(Q[:, 0], 0, self.area_w)
         Q[:, 1] = np.clip(Q[:, 1], 0, self.area_h)
@@ -327,6 +354,7 @@ class SCAFPOptimizer:
         """
         Q = Q_init.copy()
         user_positions = env.get("user_positions", np.zeros((self.K, 2)))
+        q_current = env.get("q_current", Q_init.copy())  # initial positions for movement constraint
 
         for _ in range(self.cfg.max_inner_iters):
             # 对每架 UAV 单独优化 (解耦, 简化)
@@ -361,10 +389,13 @@ class SCAFPOptimizer:
                     return obj_comm + self.cfg.lambda_sensing * obj_sense
 
                 # L-BFGS-B 优化 m-th UAV
+                # 约束: 区域边界 与 移动性约束 (v_max * Δt) 的交集
+                max_disp = self.max_displacement  # 15m
+                q0 = q_current[m]
                 bounds = [
-                    (0.0, self.area_w),       # x
-                    (0.0, self.area_h),       # y
-                    (self.H_min, self.H_max), # H
+                    (max(0.0, q0[0] - max_disp), min(self.area_w, q0[0] + max_disp)),       # x
+                    (max(0.0, q0[1] - max_disp), min(self.area_h, q0[1] + max_disp)),       # y
+                    (max(self.H_min, q0[2] - max_disp * 0.5), min(self.H_max, q0[2] + max_disp * 0.5)),  # H
                 ]
                 res = minimize(
                     objective,

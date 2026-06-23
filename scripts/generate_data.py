@@ -148,6 +148,8 @@ def main():
         p_max=10 ** ((sim_cfg["p_max_dbm"] - 30) / 10),
         noise_power=10 ** ((-174 + 10 * np.log10(sim_cfg["bandwidth_mhz"] * 1e6) + sim_cfg["noise_figure_db"] - 30) / 10),
         load_cap=sim_cfg["load_cap_per_uav"],
+        v_max=sim_cfg.get("uav_max_speed_ms", 15),
+        slot_duration=sim_cfg.get("slot_duration_s", 1.0),
     )
 
     generator = OracleDataGenerator(
