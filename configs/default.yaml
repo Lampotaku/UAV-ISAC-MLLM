@@ -47,7 +47,7 @@ training:
 
 # ---- 模型 ----
 model:
-  backbone: "google/gemma-3-12b-it"   # Gemma 3 12B Instruct
+  backbone: "/root/autodl-tmp/huggingface/models/gemma-3-12b-it"   # Gemma 3 12B Instruct (AutoDL 本地路径)
   use_multimodal: false                # 先用文本版验证, 后续切换为 true
   torch_dtype: "bfloat16"
   attn_implementation: "sdpa"   # PyTorch 原生 SDPA → cuDNN Fused Attention (不走 FlexAttention, 不受 sm_120 101KB 限制)
@@ -58,7 +58,7 @@ model:
   lora:
     rank: 16                # 论文 r=16
     alpha: 32               # 论文 α=32
-    dropout: 0.05
+    dropout: 0        # Unsloth: >0 会禁用快速内核, 导致 21s/step
     target_modules:         # Gemma 3 的 attention 线性层
       - "q_proj"
       - "k_proj"
