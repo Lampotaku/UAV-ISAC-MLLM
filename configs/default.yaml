@@ -50,8 +50,10 @@ model:
   backbone: "google/gemma-3-12b-it"   # Gemma 3 12B Instruct
   use_multimodal: false                # 先用文本版验证, 后续切换为 true
   torch_dtype: "bfloat16"
-  attn_implementation: "eager"  # Blackwell sm_120: FA2/FlexAttention 反向传播共享内存溢出 (114KB > 101KB 硬件限制)
-  # 若未来 PyTorch/Triton 修复: 可切回 "flash_attention_2" 或 "sdpa"
+  attn_implementation: "sdpa"   # PyTorch 原生 SDPA → cuDNN Fused Attention (不走 FlexAttention, 不受 sm_120 101KB 限制)
+  # eager = 21s/step (O(n²) 全注意力矩阵); sdpa = ~2-3s/step (Flash-Attention 算法)
+  # flash_attention_2 需要单独 pip install + Blackwell 预编译 wheel (暂无)
+  # FlexAttention = torch.compile 专属, sm_120 共享内存不足 101KB < 114KB → OOM
 
   lora:
     rank: 16                # 论文 r=16
