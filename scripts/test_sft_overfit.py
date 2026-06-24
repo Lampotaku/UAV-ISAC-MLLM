@@ -42,6 +42,9 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
+# Blackwell sm_120: 禁止 Inductor 使用 FlexAttention (共享内存 101KB < 需要 114KB)
+os.environ["TORCHINDUCTOR_FLEX_ATTENTION"] = "0"
+
 import numpy as np
 import yaml
 from pathlib import Path
