@@ -73,13 +73,19 @@ class Gemma3ISAC(nn.Module):
                 "Install: pip install unsloth"
             )
 
-        self.base_model, self.tokenizer = FastLanguageModel.from_pretrained(
+        self.base_model, tokenizer_or_processor = FastLanguageModel.from_pretrained(
             model_name=model_name_or_path,
             max_seq_length=max_seq_length,
             load_in_4bit=use_4bit,
             dtype=torch_dtype,
             trust_remote_code=True,
         )
+
+        # Unwrap actual tokenizer from Gemma3Processor (Gemma 3 wraps tokenizer)
+        if hasattr(tokenizer_or_processor, 'tokenizer'):
+            self.tokenizer = tokenizer_or_processor.tokenizer
+        else:
+            self.tokenizer = tokenizer_or_processor
 
         # Gemma 专用: 确保 pad_token
         if self.tokenizer.pad_token is None:
