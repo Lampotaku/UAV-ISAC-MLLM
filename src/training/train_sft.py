@@ -139,7 +139,7 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None):
     )
 
     # ---- 加载数据集 ----
-    sft_file = data_dir or os.path.join(data_cfg["output_dir"], data_cfg["sft_file"])
+    sft_file = os.path.join(data_dir, data_cfg["sft_file"]) if data_dir else os.path.join(data_cfg["output_dir"], data_cfg["sft_file"])
     logger.info(f"Loading SFT dataset from {sft_file}...")
     dataset = SFTDataset(
         data_path=sft_file,

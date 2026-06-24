@@ -197,8 +197,8 @@ def train_stage2(
         param.requires_grad = False
 
     # ---- 加载 DPO 数据集 ----
-    dpo_file = data_dir or os.path.join(data_cfg["output_dir"], data_cfg["dpo_file"])
-    sft_file = data_dir or os.path.join(data_cfg["output_dir"], data_cfg["sft_file"])
+    dpo_file = os.path.join(data_dir, data_cfg["dpo_file"]) if data_dir else os.path.join(data_cfg["output_dir"], data_cfg["dpo_file"])
+    sft_file = os.path.join(data_dir, data_cfg["sft_file"]) if data_dir else os.path.join(data_cfg["output_dir"], data_cfg["sft_file"])
 
     logger.info(f"Loading DPO dataset from {dpo_file}...")
     dpo_dataset = DPODataset(
