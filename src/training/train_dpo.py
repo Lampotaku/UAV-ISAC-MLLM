@@ -122,6 +122,7 @@ def train_stage2(
         gradient_accumulation_steps=train_cfg["gradient_accumulation_steps"],
         mixed_precision="bf16",
         log_with="tensorboard",
+        project_dir=cfg.get("log_dir", "/root/autodl-tmp/logs"),
     )
 
     logging.basicConfig(level=logging.INFO)
