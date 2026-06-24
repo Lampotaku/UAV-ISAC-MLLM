@@ -155,10 +155,14 @@ class Gemma3ISAC(nn.Module):
         Returns:
             dict with logits, control_states, projected_prior, etc.
         """
+        # Gemma 3 text-only: token_type_ids 全部设为 1 (text), 0 已由 attention_mask 处理
+        token_type_ids = torch.ones_like(input_ids)
+
         # Gemma3 前向传播
         outputs = self.base_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
             labels=labels,
             output_hidden_states=True,  # 需要 hidden states 提取 Z_c
             return_dict=True,
@@ -254,6 +258,7 @@ class Gemma3ISAC(nn.Module):
             outputs = self.base_model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
+                token_type_ids=torch.ones_like(input_ids),
                 output_hidden_states=True,
             )
 
