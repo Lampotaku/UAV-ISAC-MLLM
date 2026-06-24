@@ -215,7 +215,7 @@ if global_step % save_steps == 0:   # ← 16× 频繁写 checkpoint
 | attn_implementation | [default.yaml](configs/default.yaml#L53) | ✅ `"eager"` — Blackwell 安全 |
 | warmup_ratio | [default.yaml](configs/default.yaml#L28) | ✅ 0.03 → ~28 warmup steps (合理) |
 | save_steps | [default.yaml](configs/default.yaml#L31) | ✅ 200 → 每 ~200 步写 1 份 checkpoint (~5 份/epoch, 系统盘安全) |
-| grad_accum × batch_size | [default.yaml](configs/default.yaml#L24-L25) | ✅ 1×16=16 effective batch (合理) |
+| grad_accum × batch_size | [default.yaml](configs/default.yaml#L24-L25) | ✅ 4×4=16 effective batch (合理, 已提速) |
 
 ### 过拟合测试
 
@@ -284,8 +284,8 @@ if global_step % save_steps == 0:   # ← 16× 频繁写 checkpoint
 │ 975931f    │ TORCHINDUCTOR_FLEX_ATTENTION=0 (三重防爆盾)          │ R1       │
 │ e0896af    │ test_sft_overfit.py device mismatch (inference)      │ R1       │
 │ 4bc1a95    │ train_sft.py: 分层 LR + global_step sync             │ R2       │
-│ <pending>  │ train_sft.py: optimizer/scheduler/zero_grad sync     │ R3       │
-│ <pending>  │ train_dpo.py: 三重 sync + 分层 LR                    │ R3       │
+│ a52b4b8    │ train_sft.py: sync_gradients + train_dpo.py: sync+LR │ R3       │
+│ <pending>  │ configs/default.yaml: bs=4, grad_accum=4 (性能优化)   │ —        │
 └────────────┴──────────────────────────────────────────────────────┴──────────┘
 ```
 
