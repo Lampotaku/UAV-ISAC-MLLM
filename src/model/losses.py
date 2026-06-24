@@ -64,20 +64,23 @@ class UAVISACLosses:
           - δ̂_q, δ̂_p → MSE (连续回归)
           - δ̂_a → BCE (软关联 vs 二值 oracle)
         """
+        # Auto-align dtypes (projection head may be f32, model bf16, etc.)
+        common_dtype = torch.float32
+        dq_hat = delta_hat["delta_q"].to(dtype=common_dtype)
+        da_hat = delta_hat["delta_a"].to(dtype=common_dtype)
+        dp_hat = delta_hat["delta_p"].to(dtype=common_dtype)
+        dq_tgt = delta_target["delta_q"].to(dtype=common_dtype)
+        da_tgt = delta_target["delta_a"].to(dtype=common_dtype)
+        dp_tgt = delta_target["delta_p"].to(dtype=common_dtype)
+
         # 位移 loss (MSE)
-        loss_q = F.mse_loss(
-            delta_hat["delta_q"], delta_target["delta_q"]
-        )
+        loss_q = F.mse_loss(dq_hat, dq_tgt)
 
         # 关联 loss (BCE: 软关联 vs 二值 oracle)
-        loss_a = F.binary_cross_entropy(
-            delta_hat["delta_a"], delta_target["delta_a"]
-        )
+        loss_a = F.binary_cross_entropy(da_hat, da_tgt)
 
         # 功率 loss (MSE)
-        loss_p = F.mse_loss(
-            delta_hat["delta_p"], delta_target["delta_p"]
-        )
+        loss_p = F.mse_loss(dp_hat, dp_tgt)
 
         return self.lambda_q * loss_q + self.lambda_a * loss_a + self.lambda_p * loss_p
 
