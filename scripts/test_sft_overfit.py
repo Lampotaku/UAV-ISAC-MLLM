@@ -177,23 +177,25 @@ def run_overfit_test(config_path: str, data_path: str, n_samples: int,
         num_workers=0,  # 避免 multiprocessing 干扰调试
     )
 
-    # ── 优化器 ──
+    # ── 优化器 (分层学习率) ──
     print(f"\n[3/5] Setting up optimizer...")
-    trainable_params = [
+    # 投影头: 随机初始化 (f32), 需要较大 LR
+    proj_params = [
         p for n, p in model.named_parameters()
         if p.requires_grad and "projection_head" in n
     ]
-    trainable_params += [
+    # LoRA: 预训练权重微调 (bf16), LR 必须保守
+    lora_params = [
         p for n, p in model.base_model.named_parameters()
         if p.requires_grad
     ]
-    print(f"  Optimizing {len(trainable_params)} param groups")
+    print(f"  Optimizing: Projection Head ({len(proj_params)} tensors), "
+          f"LoRA ({len(lora_params)} tensors)")
 
-    optimizer = torch.optim.AdamW(
-        trainable_params,
-        lr=1e-3,  # 过拟合用更高 lr (不需要泛化)
-        weight_decay=0.0,  # 关闭 weight decay, 纯粹优化
-    )
+    optimizer = torch.optim.AdamW([
+        {"params": proj_params, "lr": 1e-3},   # 投影头: 从零训练
+        {"params": lora_params, "lr": 2e-4},   # LoRA: 与全量 SFT 一致
+    ], weight_decay=0.0)
 
     # ── 损失计算器 ──
     loss_fn = UAVISACLosses(
@@ -271,9 +273,10 @@ def run_overfit_test(config_path: str, data_path: str, n_samples: int,
         optimizer.step()
         optimizer.zero_grad()
 
-        # 记录
+        # 记录 (防御性: 剥离可能的计算图, 尽管 compute_stage1_total 已调 .item())
         for k in history:
-            history[k].append(metrics[k])
+            val = metrics[k]
+            history[k].append(val.item() if isinstance(val, torch.Tensor) else val)
 
         # 每 20 步更新进度条
         if step % 20 == 0:
