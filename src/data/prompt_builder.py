@@ -8,6 +8,7 @@ Prompt 构造器
   - BEV 地图 V(t): 文本网格或图像
   - 系统指令: 优化目标 + 约束说明 + 输出格式
 """
+import numpy as np
 
 
 SYSTEM_INSTRUCTION = """You are a UAV-ISAC decision controller for low-altitude IoT networks.
@@ -133,14 +134,28 @@ def format_oracle_response(sample_id: int, delta_q, delta_a, delta_p) -> str:
         delta_p: (M, K+1) 功率分配
 
     Returns:
-        JSON 格式的响应字符串
+        JSON 格式的响应字符串 (浮点数截断至 4 位小数)
     """
     import json
 
+    def _trunc(obj, ndigits=4):
+        """递归截断浮点数精度。
+        np.round 对 float32 不够：0.191 在 IEEE 754 中无法精确表示，
+        .tolist() 会还原为 0.19099999964237213 这种 17 位噪声。
+        Python round() 在 float64 下配合 json.dumps 则输出干净的 "0.191"。
+        """
+        if isinstance(obj, float):
+            return round(obj, ndigits)
+        if isinstance(obj, list):
+            return [_trunc(v, ndigits) for v in obj]
+        return obj
+
     response_dict = {
-        "delta_q": delta_q.tolist(),
-        "delta_a": delta_a.tolist(),
-        "delta_p": delta_p.tolist(),
+        "delta_q": _trunc(np.round(delta_q, 4).tolist()),
+        "delta_a": _trunc(np.round(delta_a, 4).tolist()),
+        "delta_p": _trunc(np.round(delta_p, 4).tolist()),
     }
 
-    return json.dumps(response_dict, indent=2)
+    # Compact JSON — no indent. With 176 floats, indent=2 adds ~1400 chars
+    # of whitespace/newlines that BPE tokenizer wastes tokens on (>200 tokens).
+    return json.dumps(response_dict, indent=None, separators=(",", ":"))

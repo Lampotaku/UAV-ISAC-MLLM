@@ -18,6 +18,16 @@ L_I = L_SFT + λ_ctl * L_ctl
 
 import os
 import sys
+
+# ⚠️ 必须在 import numpy / torch 之前！
+# 防止 Intel MKL / OpenBLAS 与 PyTorch DataLoader 多进程打架
+# 每个 worker 都试图开满全部核心 → CPU 100% 但进度卡死
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 import yaml
 import argparse
 import logging

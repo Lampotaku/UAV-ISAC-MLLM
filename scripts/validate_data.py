@@ -91,14 +91,22 @@ def validate_dpo_sample(item, idx, cfg):
         if role not in item or not item[role]:
             issues.append(f"L{idx}: 缺 '{role}' response")
 
-    # Utility 单调性
+    # Utility 单调性 (utility_gap = u_chosen - u_rejected)
+    # 如果写入了 utility_chosen + utility_rejected, 使用它们做详细检查
+    # 否则回退到 utility_gap (所有 DPO 记录均有此字段)
     u_chosen = item.get("utility_chosen", None)
     u_rejected = item.get("utility_rejected", None)
+    u_gap = item.get("utility_gap", None)
     if u_chosen is not None and u_rejected is not None:
         if u_chosen <= u_rejected:
             issues.append(f"L{idx}: utility 不单调 — chosen={u_chosen:.4f} <= rejected={u_rejected:.4f}")
         elif u_chosen - u_rejected < 1e-8:
             issues.append(f"L{idx}: utility 差距过小 — Δ={u_chosen-u_rejected:.2e}")
+    elif u_gap is not None:
+        if u_gap <= 0:
+            issues.append(f"L{idx}: utility_gap <= 0 — gap={u_gap:.6f} (chosen 不优于 rejected)")
+        elif u_gap < 1e-8:
+            issues.append(f"L{idx}: utility_gap 过小 — gap={u_gap:.2e}")
 
     return issues
 
@@ -177,15 +185,24 @@ def compute_stats(sft_records, dpo_records, cfg):
 
     # DPO
     if dpo_records:
-        u_chosen  = np.array([r["utility_chosen"]  for r in dpo_records if "utility_chosen"  in r])
-        u_rejected = np.array([r["utility_rejected"] for r in dpo_records if "utility_rejected" in r])
+        # 优先使用 utility_chosen/rejected, 回退到 utility_gap
+        u_chosen  = np.array([
+            r.get("utility_chosen", r.get("utility_gap", 0))
+            for r in dpo_records
+            if "utility_chosen" in r or "utility_gap" in r
+        ])
+        u_rejected = np.array([
+            r.get("utility_rejected", 0)
+            for r in dpo_records
+            if "utility_rejected" in r or "utility_gap" in r
+        ])
         if len(u_chosen) > 0 and len(u_rejected) > 0:
             deltas = u_chosen - u_rejected
             stats["dpo"] = {
                 "count": len(dpo_records),
-                "utility_chosen":  {"min": u_chosen.min(),  "mean": u_chosen.mean(),  "max": u_chosen.max()},
-                "utility_rejected": {"min": u_rejected.min(), "mean": u_rejected.mean(), "max": u_rejected.max()},
-                "utility_delta":    {"min": deltas.min(),     "mean": deltas.mean(),     "max": deltas.max()},
+                "utility_chosen":  {"min": float(u_chosen.min()),  "mean": float(u_chosen.mean()),  "max": float(u_chosen.max())},
+                "utility_rejected": {"min": float(u_rejected.min()), "mean": float(u_rejected.mean()), "max": float(u_rejected.max())},
+                "utility_delta":    {"min": float(deltas.min()),     "mean": float(deltas.mean()),     "max": float(deltas.max())},
             }
 
     return stats
@@ -295,10 +312,13 @@ def main():
         all_issues = parse_issues + sft_issues + dpo_issues
         # Count utility violations from DPO records
         if dpo_records:
+            # 优先使用 explicit chosen/rejected, 回退到 utility_gap
             dpo_arr = np.array([
-                (r.get("utility_chosen", 0), r.get("utility_rejected", 0))
+                (r.get("utility_chosen", r.get("utility_gap", 0)),
+                 r.get("utility_rejected", 0))
                 for r in dpo_records
-                if "utility_chosen" in r and "utility_rejected" in r
+                if ("utility_chosen" in r and "utility_rejected" in r)
+                or "utility_gap" in r
             ])
             if len(dpo_arr) > 0:
                 violations = int(np.sum(dpo_arr[:, 0] <= dpo_arr[:, 1]))

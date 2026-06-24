@@ -80,22 +80,29 @@ class ISACScenarioGenerator:
             p_max_dbm=p_max_dbm,
         )
 
+        self.base_seed = seed if seed is not None else 0
         self.rng = np.random.RandomState(seed)
 
     def sample(self, sample_id: int) -> EnvironmentSample:
         """
         生成一个环境样本
 
+        每个 sample_id 产生确定性的独立环境 — 不依赖全局 RNG 状态,
+        避免 multiprocessing pickle 导致所有 worker 共享相同 RNG 副本。
+
         Returns:
             EnvironmentSample 包含完整的环境状态
         """
+        # 为每个 sample 创建独立的确定性 RNG
+        sample_rng = np.random.RandomState(self.base_seed * 100000 + sample_id)
+
         # 创建临时网络
         network = UAVNetwork(
             num_uavs=self.M,
             num_users=self.K,
             num_targets=self.T,
             area_size=self.area_size,
-            seed=self.rng.randint(0, 2**31 - 1),
+            seed=int(sample_rng.randint(0, 2**31 - 1)),
         )
 
         state = network.get_state_dict()
@@ -106,7 +113,7 @@ class ISACScenarioGenerator:
             uav_pos = state["uav_positions"][m]
             for k in range(self.K):
                 user_pos = state["user_positions"][k]
-                channel_gains[m, k] = self.channel.channel_gain(uav_pos, user_pos, rng=self.rng)
+                channel_gains[m, k] = self.channel.channel_gain(uav_pos, user_pos, rng=sample_rng)
 
         # ---- 计算感知 SINR (M×T) ----
         sensing_sinrs = np.zeros((self.M, self.T), dtype=np.float32)
