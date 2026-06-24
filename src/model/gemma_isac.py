@@ -78,6 +78,7 @@ class Gemma3ISAC(nn.Module):
             max_seq_length=max_seq_length,
             load_in_4bit=use_4bit,
             dtype=torch_dtype,
+            attn_implementation=attn_implementation,
             trust_remote_code=True,
         )
 
@@ -329,6 +330,7 @@ class Gemma3ISAC(nn.Module):
             max_seq_length=max_seq_length,
             load_in_4bit=use_4bit,
             dtype=torch_dtype,
+            attn_implementation=attn_implementation,
             trust_remote_code=True,
         )
 
