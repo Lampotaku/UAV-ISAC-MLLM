@@ -85,8 +85,17 @@ class Gemma3ISAC(nn.Module):
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        # 获取 hidden_dim (Unsloth model 仍保留 base config)
-        hidden_dim = self.base_model.config.hidden_size
+        # 获取 hidden_dim (兼容 Gemma 3 嵌套 config 结构)
+        config = self.base_model.config
+        if hasattr(config, "hidden_size"):
+            hidden_dim = config.hidden_size
+        elif hasattr(config, "text_config") and hasattr(config.text_config, "hidden_size"):
+            hidden_dim = config.text_config.hidden_size
+        else:
+            raise AttributeError(
+                f"Cannot find hidden_size in model config. "
+                f"Available: {[k for k in dir(config) if not k.startswith('_')]}"
+            )
 
         # ---- 控制 Token 配置 ----
         self.num_control_tokens = num_control_tokens
