@@ -435,17 +435,17 @@ def run_inference_check(model, data_path: str, device: torch.device,
     for i, item in enumerate(raw_data):
         prompt = item["prompt"]
         q_current = torch.tensor(item["q_current"], dtype=torch.float32, device=device)
-        delta_q_tgt = torch.tensor(item["delta_q"], dtype=torch.float32)
-        delta_a_tgt = torch.tensor(item["delta_a"], dtype=torch.float32)
-        delta_p_tgt = torch.tensor(item["delta_p"], dtype=torch.float32)
+        delta_q_tgt = torch.tensor(item["delta_q"], dtype=torch.float32, device=device)
+        delta_a_tgt = torch.tensor(item["delta_a"], dtype=torch.float32, device=device)
+        delta_p_tgt = torch.tensor(item["delta_p"], dtype=torch.float32, device=device)
 
-        # 前向推理
+        # 前向推理 (generate_warmstart 返回 CPU tensor，需移到 GPU 做比对)
         with torch.no_grad():
             result = model.generate_warmstart(prompt, q_current, max_new_tokens=512)
 
-        delta_q_hat = result["delta_q"]   # (M, 3)
-        delta_a_hat = result["delta_a"]   # (M, K)
-        delta_p_hat = result["delta_p"]   # (M, K+1)
+        delta_q_hat = result["delta_q"].to(device)   # (M, 3)
+        delta_a_hat = result["delta_a"].to(device)   # (M, K)
+        delta_p_hat = result["delta_p"].to(device)   # (M, K+1)
 
         # ── 比对 1: delta_q (3D 位移) ──
         q_err = (delta_q_hat - delta_q_tgt).abs().max().item()
