@@ -134,6 +134,10 @@ class Gemma3ISAC(nn.Module):
 
         self.projection_head = ConstraintProjectionHead(**proj_head_config)
 
+        # 将投影头转换为与 base model 一致的 dtype (bfloat16)
+        base_dtype = next(self.base_model.parameters()).dtype
+        self.projection_head = self.projection_head.to(dtype=base_dtype)
+
     def forward(
         self,
         input_ids: torch.Tensor,
