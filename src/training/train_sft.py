@@ -9,11 +9,11 @@ L_I = L_SFT + λ_ctl * L_ctl
   - S=5000 环境样本
   - 3 epochs
   - lr=2e-4, cosine scheduler
-  - 有效 batch = 16 (bs=4 × grad_accum=4)
+  - 有效 batch = 16 (bs=8 × grad_accum=2)
 
 硬件: RTX PRO 6000 96GB AutoDL
-  - 4-bit QLoRA: 模型占用 ~8-10GB
-  - 训练峰值显存: ~40-50GB (bs=4)
+  - bf16 全精度 LoRA: 模型占用 ~24GB
+  - 训练峰值显存: ~75-80GB (bs=8)
 """
 
 import os
