@@ -133,10 +133,9 @@ class Gemma3ISAC(nn.Module):
         proj_head_config.setdefault("num_control_tokens", num_control_tokens)
 
         self.projection_head = ConstraintProjectionHead(**proj_head_config)
-
-        # 将投影头转换为与 base model 一致的 dtype (bfloat16)
-        base_dtype = next(self.base_model.parameters()).dtype
-        self.projection_head = self.projection_head.to(dtype=base_dtype)
+        # 注意: projection_head 保持 float32，不转为 bf16
+        # 原因: 训练目标 (delta_q/a/p 标签) 是 float32，loss 计算需要同 dtype
+        # 在 forward() 中 control_states 会从 bf16 cast 到 f32 再送入投影头
 
     def forward(
         self,
@@ -206,8 +205,8 @@ class Gemma3ISAC(nn.Module):
                 for b in range(hidden_states.shape[0])
             ], dim=0)
 
-        # Projection Head
-        prior_hat = self.projection_head(control_states, q_current)
+        # Projection Head (投影头是 float32，需要将 bf16 hidden states 转为 f32)
+        prior_hat = self.projection_head(control_states.float(), q_current)
 
         return {
             "logits": logits,
@@ -270,17 +269,17 @@ class Gemma3ISAC(nn.Module):
         # 取最后 num_control_tokens 个位置的 hidden states
         control_states = hidden_states[:, -self.num_control_tokens:]  # (1, num_ctrl, hidden_dim)
 
-        # Projection Head
+        # Projection Head (推理时: bf16 control_states → f32 输入投影头)
         if q_current is not None:
             if q_current.ndim == 2:
                 q_current = q_current.unsqueeze(0)  # (1, M, 3)
 
-        prior_hat = self.projection_head(control_states, q_current)
+        prior_hat = self.projection_head(control_states.float(), q_current)
 
         return {
-            "delta_q": prior_hat["delta_q"].squeeze(0).cpu(),      # (M, 3)
-            "delta_a": prior_hat["delta_a"].squeeze(0).cpu(),      # (M, K)
-            "delta_p": prior_hat["delta_p"].squeeze(0).cpu(),      # (M, K+1)
+            "delta_q": prior_hat["delta_q"].squeeze(0).cpu().float(),      # (M, 3)
+            "delta_a": prior_hat["delta_a"].squeeze(0).cpu().float(),      # (M, K)
+            "delta_p": prior_hat["delta_p"].squeeze(0).cpu().float(),      # (M, K+1)
         }
 
     def save_pretrained(self, save_dir: str):
@@ -325,7 +324,7 @@ class Gemma3ISAC(nn.Module):
         max_seq_length = kwargs.pop("max_seq_length", 4096)
 
         # ---- 用 Unsloth 加载 base model (4-bit + fresh LoRA) ----
-        base_model, tokenizer = FastLanguageModel.from_pretrained(
+        base_model, tokenizer_or_processor = FastLanguageModel.from_pretrained(
             model_name=base_model_name,
             max_seq_length=max_seq_length,
             load_in_4bit=use_4bit,
@@ -333,8 +332,28 @@ class Gemma3ISAC(nn.Module):
             trust_remote_code=True,
         )
 
+        # Unwrap actual tokenizer from Gemma3Processor
+        if hasattr(tokenizer_or_processor, 'tokenizer'):
+            tokenizer = tokenizer_or_processor.tokenizer
+        else:
+            tokenizer = tokenizer_or_processor
+
+        # 确保 pad_token
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+
         # ---- 控制 Token 扩展 ----
-        hidden_dim = base_model.config.hidden_size
+        # 兼容 Gemma 3 嵌套 config 结构
+        config = base_model.config
+        if hasattr(config, "hidden_size"):
+            hidden_dim = config.hidden_size
+        elif hasattr(config, "text_config") and hasattr(config.text_config, "hidden_size"):
+            hidden_dim = config.text_config.hidden_size
+        else:
+            raise AttributeError(
+                f"Cannot find hidden_size in model config. "
+                f"Available: {[k for k in dir(config) if not k.startswith('_')]}"
+            )
         control_tokens = [f"<ctrl_{i}>" for i in range(num_control_tokens)]
         num_added = tokenizer.add_tokens(control_tokens, special_tokens=True)
         if num_added > 0:
