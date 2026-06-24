@@ -505,10 +505,10 @@ scripts/upload_to_server.py     SFTP 上传 (备用，日常用 git)
 
 ```
 configs/default.yaml            全局配置 (146 行)
-docs/01_project_overview.md    初始项目概述
+docs/01_project_setup/01_project_overview.md    初始项目概述
 docs/02-07_*review*.md         6 轮代码审查报告
-docs/08_pre_launch_technical_report.md  完整技术报告 (最详细)
-docs/09_handoff_document.md    本文档 — 新对话快速上手
+docs/01_project_setup/08_pre_launch_technical_report.md  完整技术报告 (最详细)
+docs/01_project_setup/09_handoff_document.md    本文档 — 新对话快速上手
 ```
 
 ---

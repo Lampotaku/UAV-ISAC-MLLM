@@ -36,7 +36,7 @@
 | 3 | **P2** | 早期 SIGINT NameError | `scripts/generate_data.py` | +3/-0 |
 | 4 | **P1** | DPO 验证绕过 | `src/data/oracle_generator.py` + `scripts/validate_data.py` | +20/-6 |
 | 5 | **P2** | EDA 空文件崩溃 + dead code | `scripts/eda_data.py` | +20/-2 |
-| — | — | Doc #14 正文 | `docs/14_first_review_post_datagen.md` | +391 (新文件) |
+| — | — | Doc #14 正文 | `docs/02_code_reviews/14_first_review_post_datagen.md` | +391 (新文件) |
 
 ---
 
@@ -351,7 +351,7 @@ validate_dpo_sample(item, 1, cfg)  # → 检测到 "utility_gap <= 0" ✅
 | `scripts/validate_data.py` | Bug 修复 | DPO 验证 `utility_gap` 回退 + `utility_chosen/rejected` 支持 + `compute_stats` 兼容性 |
 | `src/data/oracle_generator.py` | Bug 修复 | `_build_dpo_pairs` 新增 `utility_chosen` + `utility_rejected` 字段 |
 | `scripts/eda_data.py` | Bug 修复 | 空数据保护 + 移除 dead `defaultdict` import + 补全位移直方图 + `estimate_tokens` 警告 |
-| `docs/14_first_review_post_datagen.md` | 新文件 | Doc #14 — 一审完整事后分析 (391 行) |
+| `docs/02_code_reviews/14_first_review_post_datagen.md` | 新文件 | Doc #14 — 一审完整事后分析 (391 行) |
 
 ### Commit `ee6352d` — Q1/Q3/Q4/Q5 清理修复
 

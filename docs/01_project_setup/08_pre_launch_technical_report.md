@@ -778,14 +778,14 @@ scripts/upload_to_server.py        ( 69 lines) — SFTP 上传
 ### 12.3 文档 (8 个)
 
 ```
-docs/01_project_overview.md        — 初始项目概述
-docs/02_first_review_codex.md      — 一审报告
-docs/03_second_review.md           — 二审报告
-docs/04_third_review_gemini.md     — 三审报告 (Gemini)
-docs/05_fourth_review_report.md    — 四审报告
-docs/06_fifth_review_final.md      — 五审终审报告
-docs/07_sixth_review_final.md      — 六审修复报告
-docs/08_pre_launch_technical_report.md — 本文档
+docs/01_project_setup/01_project_overview.md        — 初始项目概述
+docs/02_code_reviews/02_first_review_codex.md      — 一审报告
+docs/02_code_reviews/03_second_review.md           — 二审报告
+docs/02_code_reviews/04_third_review_gemini.md     — 三审报告 (Gemini)
+docs/02_code_reviews/05_fourth_review_report.md    — 四审报告
+docs/02_code_reviews/06_fifth_review_final.md      — 五审终审报告
+docs/02_code_reviews/07_sixth_review_final.md      — 六审修复报告
+docs/01_project_setup/08_pre_launch_technical_report.md — 本文档
 ```
 
 ### 12.4 总代码量

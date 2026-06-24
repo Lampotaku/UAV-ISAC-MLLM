@@ -1,6 +1,6 @@
 # 第六轮修复报告 — P0/P1 物理一致性全线闭合
 
-> 基于第五轮终审报告（`docs/06_fifth_review_final.md`）的 3 P0 + 4 P1 问题
+> 基于第五轮终审报告（`docs/02_code_reviews/06_fifth_review_final.md`）的 3 P0 + 4 P1 问题
 > 参照 Gemini 修改方案，逐项修复并交叉验证
 > 修改范围：3 个源文件 + 删除 1 个冗余脚本
 

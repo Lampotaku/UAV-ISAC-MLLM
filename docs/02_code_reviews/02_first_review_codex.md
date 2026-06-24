@@ -9,7 +9,7 @@
 检查对象包括：
 
 - `论文.txt`
-- `docs/01_project_overview.md`
+- `docs/01_project_setup/01_project_overview.md`
 - `configs/default.yaml`
 - `src/model/`
 - `src/data/`
