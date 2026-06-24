@@ -396,6 +396,7 @@ class Gemma3ISAC(nn.Module):
         instance.num_control_tokens = num_control_tokens
         instance.hidden_dim = hidden_dim
         instance.control_token_ids = control_token_ids
-        instance.projection_head = projection_head
+        # 确保投影头与 base_model 在同一设备 (state_dict 从 CPU 加载)
+        instance.projection_head = projection_head.to(base_model.device)
 
         return instance
