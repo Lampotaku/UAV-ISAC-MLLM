@@ -27,8 +27,14 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
-# Blackwell sm_120: 禁止 Inductor 使用 FlexAttention (共享内存 101KB < 需要 114KB)
+# ── 【防爆盾 1】核弹级环境变量 ──
+# Blackwell sm_120: 禁止 Inductor 使用 FlexAttention (共享内存 101KB < 需 114KB)
 os.environ["TORCHINDUCTOR_FLEX_ATTENTION"] = "0"
+os.environ["TORCH_COMPILE_DISABLE"] = "1"
+
+# ── 【防爆盾 2】Unsloth 强插队 ──
+# 必须在 torch / transformers 之前导入, 确保底层 Triton 补丁 100% 打上!
+import unsloth
 
 import yaml
 import argparse
@@ -39,9 +45,12 @@ from typing import Dict, Optional
 import torch
 from torch.utils.data import Dataset, DataLoader
 
-# Blackwell sm_120: 直接关闭 Inductor FlexAttention (env var 不够, 需代码级禁用)
-if hasattr(torch._inductor, "config"):
-    torch._inductor.config.flex_attention = False
+# ── 【防爆盾 3】代码级物理超度 FlexAttention ──
+import torch._inductor.config as inductor_config
+if hasattr(inductor_config, "flex_attention"):
+    inductor_config.flex_attention = False
+if hasattr(inductor_config, "use_flex_attention"):
+    inductor_config.use_flex_attention = False
 
 from transformers import get_cosine_schedule_with_warmup, set_seed
 from accelerate import Accelerator

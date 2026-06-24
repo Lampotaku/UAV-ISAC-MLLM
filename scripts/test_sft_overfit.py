@@ -35,15 +35,24 @@ import json
 import argparse
 import time
 
-# BLAS 线程抑制 (必须在 import numpy/torch 之前)
+# ── BLAS 线程抑制 (必须在 import numpy/torch 之前) ──
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
-# Blackwell sm_120: 禁止 Inductor 使用 FlexAttention (共享内存 101KB < 需要 114KB)
+# ── 【防爆盾 1】核弹级环境变量 ──
+# Blackwell sm_120: 禁止 Inductor 使用 FlexAttention (共享内存 101KB < 需 114KB)
 os.environ["TORCHINDUCTOR_FLEX_ATTENTION"] = "0"
+# 过拟合测试不需要 torch.compile, 彻底切断 Inductor 编译链路
+os.environ["TORCH_COMPILE_DISABLE"] = "1"
+
+# ── 【防爆盾 2】Unsloth 强插队 ──
+# 必须在 torch / transformers 之前导入, 确保底层 Triton 补丁 100% 打上!
+# 否则 HF 先初始化 → Unsloth 补丁失效 → 退化回 PyTorch 原生 attention
+# → Inductor 自动捕捉 → FlexAttention → OOM
+import unsloth
 
 import numpy as np
 import yaml
@@ -53,15 +62,18 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
 import torch
+
+# ── 【防爆盾 3】代码级物理超度 FlexAttention ──
+import torch._inductor.config as inductor_config
+if hasattr(inductor_config, "flex_attention"):
+    inductor_config.flex_attention = False
+if hasattr(inductor_config, "use_flex_attention"):
+    inductor_config.use_flex_attention = False
+
+# 现在可以安全导入 HF 和其他库了 (Unsloth 已就位)
 from torch.utils.data import Dataset, DataLoader
 from transformers import set_seed
 from tqdm import tqdm
-
-# Blackwell sm_120: 直接关闭 Inductor FlexAttention (env var 不够, 需代码级禁用)
-if hasattr(torch._inductor, "config"):
-    torch._inductor.config.flex_attention = False
-# 备选: 完全禁用 torch.compile (若上面不生效)
-# torch._dynamo.config.disable = True
 
 from src.model import Gemma3ISAC, UAVISACLosses
 from src.data.dataset import SFTDataset
