@@ -9,7 +9,7 @@ L_I = L_SFT + λ_ctl * L_ctl
   - S=5000 环境样本
   - 3 epochs
   - lr=2e-4, cosine scheduler
-  - 有效 batch = 16 (bs=4 × grad_accum=4)
+  - 有效 batch = 16 (bs=1 × grad_accum=16)
 
 硬件: RTX 5090 32GB AutoDL
   - 4-bit QLoRA: 模型占用 ~8-10GB
