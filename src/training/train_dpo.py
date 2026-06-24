@@ -12,7 +12,7 @@ L_II = L_DPO + μ * L_SFT + λ_ctl * L_ctl + λ_sep * L_sep
 
 硬件: RTX PRO 6000 96GB AutoDL
   - 需要同时加载 reference model (冻结)
-  - bf16 双模型 (~48GB) + 4×logits (~32GB) + 激活 ≈ 90GB (96GB 极限, 但安全)
+  - bf16 双模型 (~48GB) + 4×logits fp32 (~15GB) + 激活 ≈ 75-85GB (bs=1, 96GB 安全)
 """
 
 import os

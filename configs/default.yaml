@@ -21,8 +21,8 @@ training:
   # Stage I: SFT
   sft:
     epochs: 3
-    per_device_batch_size: 8          # bs=8 → bf16 模型 24GB + logits 31GB ≈ 55GB, 96GB 吃满 60%
-    gradient_accumulation_steps: 2    # 有效 batch = 8×2 = 16
+    per_device_batch_size: 4          # bs=4 → 模型 24GB + logits(fp32) 15GB + 激活~25GB ≈ 64GB; backward梯度~15GB → 峰值~80GB
+    gradient_accumulation_steps: 4    # 有效 batch = 4×4 = 16
     learning_rate: 2.0e-4
     lr_scheduler: "cosine"
     warmup_ratio: 0.03
@@ -34,8 +34,8 @@ training:
   # Stage II: DPO
   dpo:
     epochs: 2
-    per_device_batch_size: 2          # bs=2 → bf16 双模型 (48GB) + 4×logits (32GB) ≈ 90GB, 96GB 极限
-    gradient_accumulation_steps: 8    # 有效 batch = 2×8 = 16
+    per_device_batch_size: 1          # bs=1 → 双模型48GB + 4×logits(fp32) 15GB ≈ 63GB; backward≈12GB → 峰值~75GB (bs=2 会OOM)
+    gradient_accumulation_steps: 16   # 有效 batch = 1×16 = 16
     learning_rate: 5.0e-5
     lr_scheduler: "cosine"
     warmup_ratio: 0.03
