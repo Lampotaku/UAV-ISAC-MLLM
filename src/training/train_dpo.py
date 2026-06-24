@@ -209,13 +209,24 @@ def train_stage2(
         pin_memory=True,
     )
 
-    # ---- 优化器 ----
-    trainable_params = [
-        p for p in model.parameters() if p.requires_grad
+    # ---- 优化器 (分层学习率) ----
+    # Stage II: 投影头已从 Stage I 预训练 → 用较小 LR 微调
+    # LoRA 继续用 DPO LR 微调语言偏好
+    proj_params = [
+        p for n, p in model.named_parameters()
+        if p.requires_grad and "projection_head" in n
     ]
+    lora_params = [
+        p for n, p in model.base_model.named_parameters()
+        if p.requires_grad
+    ]
+
+    base_lr = train_cfg["learning_rate"]
     optimizer = torch.optim.AdamW(
-        trainable_params,
-        lr=train_cfg["learning_rate"],
+        [
+            {"params": proj_params, "lr": base_lr},
+            {"params": lora_params, "lr": base_lr},
+        ],
         weight_decay=train_cfg.get("weight_decay", 0.01),
     )
 
@@ -366,22 +377,27 @@ def train_stage2(
                         model.parameters(),
                         cfg["hardware"]["max_grad_norm"],
                     )
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad()
 
-                optimizer.step()
-                scheduler.step()
-                optimizer.zero_grad()
+            # 仅在真正执行梯度同步后才推进 scheduler / global_step / log / save
+            # 防止 grad_accum=16 时每个 micro-batch:
+            #   - scheduler.step() 被调 16 次 → LR 衰减 16 倍过快
+            #   - zero_grad() 清空累积梯度 → 有效 batch=1 (非 16)
+            #   - global_step 被 +16 次 → 疯狂写 checkpoint 撑爆硬盘
+            if accelerator.sync_gradients:
+                global_step += 1
 
-            global_step += 1
+                if global_step % train_cfg["logging_steps"] == 0:
+                    progress.set_postfix(metrics)
+                    accelerator.log(metrics, step=global_step)
 
-            if global_step % train_cfg["logging_steps"] == 0:
-                progress.set_postfix(metrics)
-                accelerator.log(metrics, step=global_step)
-
-            if global_step % train_cfg["save_steps"] == 0:
-                ckpt_path = os.path.join(checkpoint_dir, f"stage2_step_{global_step}")
-                unwrapped = accelerator.unwrap_model(model)
-                unwrapped.save_pretrained(ckpt_path)
-                logger.info(f"Checkpoint saved to {ckpt_path}")
+                if global_step % train_cfg["save_steps"] == 0:
+                    ckpt_path = os.path.join(checkpoint_dir, f"stage2_step_{global_step}")
+                    unwrapped = accelerator.unwrap_model(model)
+                    unwrapped.save_pretrained(ckpt_path)
+                    logger.info(f"Checkpoint saved to {ckpt_path}")
 
     # 最终保存
     final_path = os.path.join(output_dir, "stage2_dpo_final")

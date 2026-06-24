@@ -256,13 +256,15 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None):
                         model.parameters(),
                         cfg["hardware"]["max_grad_norm"],
                     )
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad()
 
-                optimizer.step()
-                scheduler.step()
-                optimizer.zero_grad()
-
-            # 仅在真正执行梯度同步 (optimizer step) 后才推进 global_step
-            # 防止 grad_accum=16 时每个 micro-batch 都 +1 → 疯狂写 checkpoint 撑爆硬盘
+            # 仅在真正执行梯度同步 (optimizer step) 后才推进 global_step / scheduler / zero_grad
+            # 防止 grad_accum=16 时每个 micro-batch:
+            #   - scheduler.step() 被调 16 次 → LR 衰减 16 倍过快
+            #   - zero_grad() 清空累积梯度 → 有效 batch=1 (非 16)
+            #   - global_step 被 +16 次 → 疯狂写 checkpoint 撑爆硬盘
             if accelerator.sync_gradients:
                 global_step += 1
 
