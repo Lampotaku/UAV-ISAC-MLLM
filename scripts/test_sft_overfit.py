@@ -6,6 +6,14 @@ SFT 过拟合测试 — 证明训练管线正确性的最简可行证据
 如果 loss 降不到接近 0，说明代码有 bug (loss 计算、梯度断流、
 mask 错位、投影头没接上等)。
 
+6 项检查:
+  1. loss_total 下降 >50%           — 梯度流、前向/反向传播
+  2. loss_sft < 0.5                 — label_mask 对齐、token prediction
+  3. loss_ctl < 0.01                — 投影头梯度流、δ 目标拟合
+  4. 最后 50 步 loss 持续下降        — 优化器、学习率
+  5. 无 NaN/Inf                     — 梯度裁剪、loss 计算安全
+  6. 过拟合后 inference 匹配标签     — 前向推理管线、投影头 train/eval 一致性
+
 用法 (服务器):
   conda activate uavmllm
   python scripts/test_sft_overfit.py --data-dir /root/autodl-tmp/data/full5000
@@ -13,6 +21,7 @@ mask 错位、投影头没接上等)。
 预期:
   - loss_sft: 从 ~2-4 降到 <0.3
   - loss_ctl: 从 ~0.1-0.5 降到 <0.01
+  - 6/6 checks all green
   - 无 NaN, 无 Inf
   - ~3-5 分钟完成
 
@@ -340,10 +349,15 @@ def run_overfit_test(config_path: str, data_path: str, n_samples: int,
         fail("NaN/Inf detected — learning rate too high or gradient explosion")
         all_checks_pass = False
 
+    # Check 6: 前向推理管线验证 (过拟合后 inference 必须匹配训练标签)
+    inference_ok = run_inference_check(model, data_path, device, sim_cfg, n_samples)
+    if not inference_ok:
+        all_checks_pass = False
+
     # ── 总结 ──
     print(f"\n{'='*60}")
     if all_checks_pass:
-        print(f"{GREEN}✓ ALL CHECKS PASSED{RESET}")
+        print(f"{GREEN}✓ ALL 6 CHECKS PASSED{RESET}")
         print(f"  The SFT training pipeline is correctly wired:")
         print(f"    • Tokenization + control token injection")
         print(f"    • Gemma3 forward pass (4-bit QLoRA)")
@@ -352,6 +366,7 @@ def run_overfit_test(config_path: str, data_path: str, n_samples: int,
         print(f"    • Combined loss (L_SFT + λ_ctl * L_ctl)")
         print(f"    • Gradient flow through LoRA + projection head")
         print(f"    • Optimizer updates")
+        print(f"    • Forward inference (generate_warmstart → correct deltas)")
         print(f"\n  → Safe to proceed with full 5000-sample SFT training.")
     else:
         print(f"{RED}✗ SOME CHECKS FAILED{RESET}")
@@ -359,6 +374,115 @@ def run_overfit_test(config_path: str, data_path: str, n_samples: int,
     print(f"{'='*60}")
 
     return all_checks_pass
+
+
+def run_inference_check(model, data_path: str, device: torch.device,
+                        sim_cfg: dict, n_samples: int = 5) -> bool:
+    """
+    Check 6: 过拟合后前向推理管线验证 (Ultimate Sanity Check)
+
+    在 5 个过拟合样本上运行 generate_warmstart(), 比对:
+      - delta_q 输出是否与训练标签一致 (max abs error < 0.01)
+      - delta_a 输出是否与训练标签一致 (accuracy > 95%)
+      - delta_p 输出是否与训练标签一致 (max abs error < 0.01)
+      - 物理约束是否满足 (‖Δq‖₂ ≤ 15m)
+
+    原理: loss 正常下降不代表 forward inference pipeline 正确 —
+     train/eval 模式差异、hidden state 提取、投影头 forward 路径
+     都可能出问题。此项检查一次性验证全部推理管线。
+    """
+    print(f"\n[6/6] Forward inference pipeline check...")
+    print(f"  Running generate_warmstart() on {n_samples} overfit samples")
+
+    # 加载原始 JSON 数据 (需要 prompt 字符串 + ground-truth deltas)
+    raw_data = []
+    with open(data_path, "r", encoding="utf-8") as f:
+        for i, line in enumerate(f):
+            if i >= n_samples:
+                break
+            raw_data.append(json.loads(line))
+
+    v_max_dt = sim_cfg["uav_max_speed_ms"] * sim_cfg["slot_duration_s"]
+    p_max = 10 ** ((sim_cfg["p_max_dbm"] - 30) / 10)
+
+    model.eval()
+    all_ok = True
+
+    for i, item in enumerate(raw_data):
+        prompt = item["prompt"]
+        q_current = torch.tensor(item["q_current"], dtype=torch.float32, device=device)
+        delta_q_tgt = torch.tensor(item["delta_q"], dtype=torch.float32)
+        delta_a_tgt = torch.tensor(item["delta_a"], dtype=torch.float32)
+        delta_p_tgt = torch.tensor(item["delta_p"], dtype=torch.float32)
+
+        # 前向推理
+        with torch.no_grad():
+            result = model.generate_warmstart(prompt, q_current, max_new_tokens=512)
+
+        delta_q_hat = result["delta_q"]   # (M, 3)
+        delta_a_hat = result["delta_a"]   # (M, K)
+        delta_p_hat = result["delta_p"]   # (M, K+1)
+
+        # ── 比对 1: delta_q (3D 位移) ──
+        q_err = (delta_q_hat - delta_q_tgt).abs().max().item()
+        q_mse = (delta_q_hat - delta_q_tgt).pow(2).mean().item()
+        if q_err > 0.01:
+            fail(f"  Sample {i}: delta_q max abs error = {q_err:.6f} > 0.01 "
+                 f"(MSE={q_mse:.6f})")
+            all_ok = False
+
+        # ── 比对 2: delta_a (关联矩阵) ──
+        a_pred = (delta_a_hat > 0.5).float()
+        a_acc = (a_pred == delta_a_tgt).float().mean().item()
+        if a_acc < 0.95:
+            fail(f"  Sample {i}: delta_a accuracy = {a_acc:.4f} < 0.95")
+            all_ok = False
+
+        # ── 比对 3: delta_p (功率分配) ──
+        p_err = (delta_p_hat - delta_p_tgt).abs().max().item()
+        p_mse = (delta_p_hat - delta_p_tgt).pow(2).mean().item()
+        if p_err > 0.01:
+            fail(f"  Sample {i}: delta_p max abs error = {p_err:.6f} > 0.01 "
+                 f"(MSE={p_mse:.6f})")
+            all_ok = False
+
+        # ── 物理约束 1: 位移 ≤ v_max·Δt ──
+        q_norms = delta_q_hat.norm(dim=-1)  # (M,) 3D norm per UAV
+        max_disp = q_norms.max().item()
+        if max_disp > v_max_dt + 0.1:
+            fail(f"  Sample {i}: max ‖Δq‖₂ = {max_disp:.2f}m > {v_max_dt}m")
+            all_ok = False
+
+        # ── 物理约束 2: 高度边界 ──
+        h_new = q_current[:, 2] + delta_q_hat[:, 2]
+        h_min_violation = (h_new < sim_cfg["altitude_min_m"]).any().item()
+        h_max_violation = (h_new > sim_cfg["altitude_max_m"]).any().item()
+        if h_min_violation or h_max_violation:
+            fail(f"  Sample {i}: altitude constraint violated "
+                 f"(h range: [{h_new.min().item():.1f}, {h_new.max().item():.1f}]m)")
+            all_ok = False
+
+        # ── 物理约束 3: 功率预算 ──
+        power_per_uav = delta_p_hat.sum(dim=-1)  # (M,) sum over (K+1) users+target
+        max_power = power_per_uav.max().item()
+        if max_power > p_max + 0.02:
+            fail(f"  Sample {i}: max power = {max_power:.4f}W > {p_max}W")
+            all_ok = False
+
+    # ── 汇总 ──
+    if all_ok:
+        ok("Forward inference pipeline verified:")
+        ok("  • generate_warmstart() produces correct delta_q/a/p")
+        ok("  • All physical constraints satisfied (‖Δq‖₂, altitude, power)")
+        ok("  • Control token extraction + projection head forward = training labels")
+        ok("  • Train → Eval mode transition clean (no BN/dropout mismatch)")
+    else:
+        fail("Forward inference mismatch — possible causes:")
+        fail("  • Hidden state extraction from wrong positions")
+        fail("  • Projection head train/eval mode discrepancy")
+        fail("  • Control token mask misalignment in generate_warmstart()")
+
+    return all_ok
 
 
 def main():
