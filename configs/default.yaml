@@ -50,7 +50,8 @@ model:
   backbone: "google/gemma-3-12b-it"   # Gemma 3 12B Instruct
   use_multimodal: false                # 先用文本版验证, 后续切换为 true
   torch_dtype: "bfloat16"
-  attn_implementation: "flash_attention_2"  # 优先 FA2; 不可用时改为 "sdpa"
+  attn_implementation: "eager"  # Blackwell sm_120: FA2/FlexAttention 反向传播共享内存溢出 (114KB > 101KB 硬件限制)
+  # 若未来 PyTorch/Triton 修复: 可切回 "flash_attention_2" 或 "sdpa"
 
   lora:
     rank: 16                # 论文 r=16
