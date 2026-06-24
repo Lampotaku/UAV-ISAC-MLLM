@@ -57,6 +57,12 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import set_seed
 from tqdm import tqdm
 
+# Blackwell sm_120: 直接关闭 Inductor FlexAttention (env var 不够, 需代码级禁用)
+if hasattr(torch._inductor, "config"):
+    torch._inductor.config.flex_attention = False
+# 备选: 完全禁用 torch.compile (若上面不生效)
+# torch._dynamo.config.disable = True
+
 from src.model import Gemma3ISAC, UAVISACLosses
 from src.data.dataset import SFTDataset
 

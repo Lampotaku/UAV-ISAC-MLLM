@@ -40,6 +40,11 @@ from typing import Dict, Optional
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
+
+# Blackwell sm_120: 直接关闭 Inductor FlexAttention (env var 不够, 需代码级禁用)
+if hasattr(torch._inductor, "config"):
+    torch._inductor.config.flex_attention = False
+
 from transformers import (
     get_cosine_schedule_with_warmup,
     set_seed,
