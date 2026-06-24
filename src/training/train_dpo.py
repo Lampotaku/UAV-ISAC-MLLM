@@ -10,9 +10,9 @@ L_II = L_DPO + μ * L_SFT + λ_ctl * L_ctl + λ_sep * L_sep
   - lr = 5e-5 (低于 SFT)
   - 从 Stage I checkpoint 热启动
 
-硬件: RTX 5090 32GB AutoDL
+硬件: RTX PRO 6000 96GB AutoDL
   - 需要同时加载 reference model (冻结)
-  - 峰值显存: ~28-32GB (两张都 4-bit 的情况下约 22-25GB)
+  - 峰值显存: ~50-60GB (两张 4-bit, bs=4, 96GB 绰绰有余)
 """
 
 import os
@@ -26,6 +26,12 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
+# ── 【防爆盾 0】网络/遥测静默 ──
+# 0a: 禁止 Unsloth 连接 HuggingFace 上报统计 (国内超时 120s)
+os.environ["UNSLOTH_DISABLE_STATISTICS"] = "1"
+# 0b: HuggingFace 镜像 (国内加速, 不影响本地模型加载)
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
 # ── 【防爆盾 1】核弹级环境变量 ──
 # Blackwell sm_120: 禁止 Inductor 使用 FlexAttention (共享内存 101KB < 需 114KB)

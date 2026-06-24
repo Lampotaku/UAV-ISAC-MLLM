@@ -1,14 +1,14 @@
 # ==========================================================================
 # Constraint-Aware MLLM for UAV-ISAC — 主配置文件
-# 硬件目标: RTX 5090 32GB @ AutoDL
+# 硬件目标: RTX PRO 6000 96GB @ AutoDL
 # ==========================================================================
 
 # ---- 硬件 / 训练 ----
-# RTX 5090 32GB (Blackwell sm_120) — CUDA 12.8+
+# RTX PRO 6000 96GB (Blackwell sm_120) — CUDA 12.8+
 # 使用 Unsloth 替代 bitsandbytes (Unsloth 内置 Blackwell 优化内核)
 hardware:
-  gpu: "RTX 5090"
-  vram_gb: 32
+  gpu: "RTX PRO 6000"
+  vram_gb: 96
   use_4bit: true            # QLoRA 4-bit (Unsloth)
   gradient_checkpointing: true
   max_grad_norm: 1.0
@@ -21,8 +21,8 @@ training:
   # Stage I: SFT
   sft:
     epochs: 3
-    per_device_batch_size: 1          # bs=1 → Gemma 256K 词表 logits 约 4GB (唯一安全值)
-    gradient_accumulation_steps: 16   # 有效 batch = 1×16 = 16 (不变)
+    per_device_batch_size: 4          # bs=4 → 96GB 绰绰有余
+    gradient_accumulation_steps: 4    # 有效 batch = 4×4 = 16
     learning_rate: 2.0e-4
     lr_scheduler: "cosine"
     warmup_ratio: 0.03
@@ -34,8 +34,8 @@ training:
   # Stage II: DPO
   dpo:
     epochs: 2
-    per_device_batch_size: 1          # bs=1 → DPO 同时加载 ref model + 训练 model, 必须保守
-    gradient_accumulation_steps: 16   # 有效 batch = 1×16 = 16 (不变)
+    per_device_batch_size: 4          # bs=4 → 96GB 下 DPO 双模型无压力
+    gradient_accumulation_steps: 4    # 有效 batch = 4×4 = 16
     learning_rate: 5.0e-5
     lr_scheduler: "cosine"
     warmup_ratio: 0.03

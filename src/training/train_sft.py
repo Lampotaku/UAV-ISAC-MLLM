@@ -9,11 +9,11 @@ L_I = L_SFT + λ_ctl * L_ctl
   - S=5000 环境样本
   - 3 epochs
   - lr=2e-4, cosine scheduler
-  - 有效 batch = 16 (bs=1 × grad_accum=16)
+  - 有效 batch = 16 (bs=4 × grad_accum=4)
 
-硬件: RTX 5090 32GB AutoDL
+硬件: RTX PRO 6000 96GB AutoDL
   - 4-bit QLoRA: 模型占用 ~8-10GB
-  - 训练峰值显存: ~25-30GB
+  - 训练峰值显存: ~40-50GB (bs=4)
 """
 
 import os
@@ -27,6 +27,12 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
+# ── 【防爆盾 0】网络/遥测静默 ──
+# 0a: 禁止 Unsloth 连接 HuggingFace 上报统计 (国内超时 120s)
+os.environ["UNSLOTH_DISABLE_STATISTICS"] = "1"
+# 0b: HuggingFace 镜像 (国内加速, 不影响本地模型加载)
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
 # ── 【防爆盾 1】核弹级环境变量 ──
 # Blackwell sm_120: 禁止 Inductor 使用 FlexAttention (共享内存 101KB < 需 114KB)
