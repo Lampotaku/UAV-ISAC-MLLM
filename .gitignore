@@ -17,6 +17,9 @@ venv/
 # Claude
 .claude/
 
+# Unsloth runtime cache (auto-generated per GPU)
+unsloth_compiled_cache/
+
 # Training outputs
 outputs/
 checkpoints/
