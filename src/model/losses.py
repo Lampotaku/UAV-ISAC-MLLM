@@ -163,19 +163,25 @@ class UAVISACLosses:
 
         标准 causal LM cross-entropy
         可用 label_mask 只计算 response 部分的 token
+
+        内存优化: 不调用 .contiguous()/.view() 来避免 logits 二次拷贝 (~8 GB).
+        改用 movedim 将 class 维度放到 dim=1, 直接传 3D tensor 给 F.cross_entropy.
+        (cross_entropy 支持 (N,C,d1,...) 输入, softmax 在 C 维上做, 而 C 维 stride=1)
         """
-        # 右移: predict next token
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous()
+        # 右移: predict next token (slice 创建 view, 不拷贝)
+        # Input:  (B, V, S-1) — C 维 stride=1, 无需 contiguous
+        # Target: (B, S-1)
+        shift_logits = logits[:, :-1, :].transpose(1, 2)    # (B, V, S-1)
+        shift_labels = labels[:, 1:]                         # (B, S-1)
 
         loss = F.cross_entropy(
-            shift_logits.view(-1, shift_logits.size(-1)),
-            shift_labels.view(-1),
+            shift_logits,      # cross_entropy 在 dim=1 (C 维) 上做 log_softmax
+            shift_labels,      # 支持 (N, d1) target 匹配 (N, C, d1) input
             reduction="none",
-        )
+        )  # → (B, S-1)
 
         if label_mask is not None:
-            shift_mask = label_mask[..., 1:].contiguous().view(-1)
+            shift_mask = label_mask[:, 1:]                   # (B, S-1)
             loss = (loss * shift_mask).sum() / (shift_mask.sum() + 1e-8)
         else:
             loss = loss.mean()

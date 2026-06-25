@@ -85,14 +85,18 @@ def _compute_logprob(
     计算每条样本在 response token 上的平均 log-probability
 
     返回 (B,) tensor, 每个元素是 log π(response | prompt)
+
+    内存优化: 不调用 .contiguous(), 用 transpose 将 class 维度
+    移到 dim=1 后直接传给 log_softmax (class 维 stride=1, 无需拷贝).
     """
-    shift_logits = logits[..., :-1, :].contiguous()       # (B, seq_len-1, V)
-    shift_labels = labels[..., 1:].contiguous()            # (B, seq_len-1)
-    shift_mask = label_mask[..., 1:].contiguous()          # (B, seq_len-1)
+    # 右移: predict next token (全部是 view, 不拷贝 ~2 GB per tensor)
+    shift_logits = logits[:, :-1, :].transpose(1, 2)   # (B, V, S-1)
+    shift_labels = labels[:, 1:]                         # (B, S-1)
+    shift_mask = label_mask[:, 1:]                       # (B, S-1)
     safe_labels = shift_labels.masked_fill(shift_labels < 0, 0)
 
-    log_probs = torch.nn.functional.log_softmax(shift_logits, dim=-1)
-    per_token_logp = log_probs.gather(-1, safe_labels.unsqueeze(-1)).squeeze(-1)
+    log_probs = torch.nn.functional.log_softmax(shift_logits, dim=1)  # softmax over class dim
+    per_token_logp = log_probs.gather(1, safe_labels.unsqueeze(1)).squeeze(1)  # (B, S-1)
     masked = per_token_logp * shift_mask
     seq_logp = masked.sum(dim=-1)  # SUM not mean — DPO needs joint log-prob Σ_t log π(y_t|...)
     return seq_logp
