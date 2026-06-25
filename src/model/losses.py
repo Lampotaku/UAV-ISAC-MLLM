@@ -182,8 +182,11 @@ class UAVISACLosses:
           因为只借用了 Unsloth 的 loss 内核, 不动模型加载路径 (SDPA 不受影响).
           Fallback: _grad_ckpt 包装 F.cross_entropy (纯 PyTorch, backward 重算).
         """
-        # 右移: predict next token (slice 创建 view, 不拷贝)
-        shift_logits = logits[:, :-1, :]    # (B, S-1, V) — 不转置, Unsloth 用最后一维
+        # 右移: predict next token
+        # 必须 .contiguous(): [:, :-1, :] 对中间维切片产生非连续 stride,
+        # Unsloth 内核的 .view(batch*seq_len, d) 要求连续内存.
+        # bf16 拷贝 ~8 GB, 砍掉 fp32 梯度 16 GB 后绰绰有余.
+        shift_logits = logits[:, :-1, :].contiguous()    # (B, S-1, V)
         shift_labels = labels[:, 1:]         # (B, S-1)
 
         if label_mask is not None:
