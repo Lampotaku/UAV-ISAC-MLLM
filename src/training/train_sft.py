@@ -17,8 +17,8 @@ L_I = L_SFT + λ_ctl * L_ctl
   - 前向: logits bf16 ~4.2GB (bs=2×4096×256K) + last_hidden_state ~128MB
   - 反向: grad_logits ~4.2GB (bf16) + grad_embed ~2GB + 激活梯度 ~5GB
   - CE 损失: 纯 PyTorch F.cross_entropy, bs=2 时 fp32 中间约 ~8GB
-  - 峰值显存: ~70GB (bs=2, grad_accum=8, ~26GB 余量)
-  - SDPA: ~2s/step (bs=2, 1250 steps × 3 epochs ≈ 2h)
+  - 峰值显存: ~65GB (bs=2, seq=3456, grad_accum=8, ~31GB 余量)
+  - SDPA: ~1.5-2s/step (seq 4096→3456 省 ~40% 注意力计算, 1250 steps × 3 epochs ≈ 1.5h)
 """
 
 import os
