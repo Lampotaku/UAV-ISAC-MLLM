@@ -14,10 +14,11 @@ L_I = L_SFT + λ_ctl * L_ctl
 硬件: RTX PRO 6000 96GB AutoDL
   - bf16 全精度 LoRA: 模型占用 ~24GB
   - modules_to_save (embed_tokens): AdamW 状态 ~8GB
-  - 前向: logits bf16 ~8.4GB + last_hidden_state ~128MB
+  - 前向: logits bf16 ~4.2GB (bs=2×4096×256K) + last_hidden_state ~128MB
   - 反向: grad_logits ~4.2GB (bf16) + grad_embed ~2GB + 激活梯度 ~5GB
-  - CE 损失: 纯 PyTorch F.cross_entropy, bs=1 时 fp32 梯度 ~4GB (bs=4 ~16GB → 省)
-  - 峰值显存: ~48GB (bs=1, grad_accum=16, ~48GB 余量 — 充裕)
+  - CE 损失: 纯 PyTorch F.cross_entropy, bs=2 时 fp32 中间约 ~8GB
+  - 峰值显存: ~70GB (bs=2, grad_accum=8, ~26GB 余量)
+  - FA2 预期: ~1.5-2s/step (vs SDPA ~2.5s/step)
 """
 
 import os

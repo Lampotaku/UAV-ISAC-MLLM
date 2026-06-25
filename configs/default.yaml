@@ -21,8 +21,8 @@ training:
   # Stage I: SFT
   sft:
     epochs: 3
-    per_device_batch_size: 1          # bs=1: CE fp32 梯度 ~4GB (vs bs=4 ~16GB) — 纯 PyTorch, 无 Unsloth
-    gradient_accumulation_steps: 16   # 有效 batch = 1×16 = 16 (数学等价于 bs=4×4)
+    per_device_batch_size: 2          # bs=2: CE fp32 梯度 ~8GB, 峰值 ~70GB — 96GB 安全 (闲置 38GB 利用)
+    gradient_accumulation_steps: 8    # 有效 batch = 2×8 = 16 (数学等价于 bs=4×4, bs=1×16)
     learning_rate: 2.0e-4
     lr_scheduler: "cosine"
     warmup_ratio: 0.03
@@ -50,10 +50,10 @@ model:
   backbone: "/root/autodl-tmp/huggingface/models/gemma-3-12b-it"   # Gemma 3 12B Instruct (AutoDL 本地路径)
   use_multimodal: false                # 先用文本版验证, 后续切换为 true
   torch_dtype: "bfloat16"
-  attn_implementation: "sdpa"   # PyTorch 原生 SDPA → cuDNN Fused Attention (不走 FlexAttention, 不受 sm_120 101KB 限制)
-  # eager = 21s/step (O(n²) 全注意力矩阵); sdpa = ~2-3s/step (Flash-Attention 算法)
-  # flash_attention_2 需要单独 pip install + Blackwell 预编译 wheel (暂无)
-  # FlexAttention = torch.compile 专属, sm_120 共享内存不足 101KB < 114KB → OOM
+  attn_implementation: "flash_attention_2"   # FA2 > SDPA (>2x faster on 4096 seq); 若无 pip install flash-attn --no-build-isolation 则退回 sdpa
+  # sdpa = ~2.5s/step (cuDNN Fused Attention)
+  # flash_attention_2 = ~1.5-2s/step (真正 Flash-Attention 内核)
+  # eager = 21s/step (O(n²) 全注意力矩阵)
 
   lora:
     rank: 16                # 论文 r=16
