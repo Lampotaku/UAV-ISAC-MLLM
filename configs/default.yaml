@@ -21,7 +21,7 @@ training:
   # Stage I: SFT
   sft:
     epochs: 3
-    per_device_batch_size: 4          # bs=4 → 模型 24GB + logits(fp32) 15GB + 激活~25GB ≈ 64GB; backward梯度~15GB → 峰值~80GB
+    per_device_batch_size: 4          # bs=4: 峰值 ~52GB (修复后, 不再 fp32 logits 膨胀) — 96GB 安全
     gradient_accumulation_steps: 4    # 有效 batch = 4×4 = 16
     learning_rate: 2.0e-4
     lr_scheduler: "cosine"

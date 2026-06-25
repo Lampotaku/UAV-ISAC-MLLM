@@ -201,18 +201,27 @@ class Gemma3ISAC(nn.Module):
         # Gemma 3 text-only: token_type_ids 全部设为 1 (text), 0 已由 attention_mask 处理
         token_type_ids = torch.ones_like(input_ids)
 
-        # Gemma3 前向传播
-        outputs = self.base_model(
+        # ── 高效前向: 绕过 output_hidden_states + 内部 fp32 logits 膨胀 ──
+        # 旧代码两个内存陷阱 (合计 ~22 GB 峰值):
+        #   a) output_hidden_states=True → 存 48 层 hidden states (~6 GB)
+        #   b) 传 labels 给 CausalLM → HF 内部 cross-entropy 把 bf16 logits (8 GB)
+        #       cast 到 fp32 (16 GB) → 峰值 24 GB 仅 logits, 触发 OOM
+        # 修复: 直接调底层 transformer, 拿 last_hidden_state + 手动 lm_head
+        # 结构: base_model (PeftModel) → .model (Gemma3ForCausalLM) → .model (Transformer) + .lm_head
+        causal_lm = self.base_model.model       # Gemma3ForCausalLM
+        transformer = causal_lm.model           # Gemma3Model (48 layers, norm)
+        lm_head = causal_lm.lm_head             # vocab projection
+
+        transformer_out = transformer(
             input_ids=input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
-            labels=labels,
-            output_hidden_states=True,  # 需要 hidden states 提取 Z_c
+            output_hidden_states=False,          # 只要 last_hidden_state, 省 ~6 GB
+            use_cache=False,                     # 训练不需要 KV cache
             return_dict=True,
         )
-
-        logits = outputs.logits
-        hidden_states = outputs.hidden_states[-1]  # 最后一层 (B, seq_len, hidden_dim)
+        hidden_states = transformer_out.last_hidden_state  # (B, seq_len, hidden_dim)
+        logits = lm_head(hidden_states)          # 保持 bf16, 不产生 fp32 副本
 
         # 提取控制 token 的 hidden states
         if control_mask is not None:
@@ -305,16 +314,19 @@ class Gemma3ISAC(nn.Module):
             torch.ones_like(ctrl_input_ids),
         ], dim=1)
 
-        # 前向传播
+        # 前向传播 (高效路径: 跳过 CausalLM wrapper, 直接拿 last_hidden_state)
         with torch.no_grad():
-            outputs = self.base_model(
+            causal_lm = self.base_model.model
+            transformer = causal_lm.model
+            transformer_out = transformer(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 token_type_ids=torch.ones_like(input_ids),
-                output_hidden_states=True,
+                output_hidden_states=False,     # 只要 last_hidden_state
+                use_cache=False,
+                return_dict=True,
             )
-
-        hidden_states = outputs.hidden_states[-1]
+        hidden_states = transformer_out.last_hidden_state
         # 取最后 num_control_tokens 个位置的 hidden states
         control_states = hidden_states[:, -self.num_control_tokens:]  # (1, num_ctrl, hidden_dim)
 

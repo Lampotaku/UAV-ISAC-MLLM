@@ -27,6 +27,9 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
+# PyTorch CUDA 内存分配器: 允许动态释放缓存段, 减少碎片化 OOM
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 # ── 【防爆盾 0】网络/遥测静默 ──
 # 0a: 禁止 Unsloth 连接 HuggingFace 上报统计 (国内超时 120s)
 os.environ["UNSLOTH_DISABLE_STATISTICS"] = "1"

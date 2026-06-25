@@ -13,7 +13,11 @@ L_I = L_SFT + λ_ctl * L_ctl
 
 硬件: RTX PRO 6000 96GB AutoDL
   - bf16 全精度 LoRA: 模型占用 ~24GB
-  - 训练峰值显存: ~75-80GB (bs=4, logits fp32=15GB + backward梯度=15GB)
+  - modules_to_save (embed_tokens): AdamW 状态 ~4GB
+  - 前向: logits bf16 ~8.4GB + last_hidden_state ~128MB
+  - 反向: grad_logits ~8.4GB + grad_embed ~2GB + checkpoint 重计算 ~5GB
+  - 峰值显存: ~52GB (bs=4 安全, ~44GB 余量)
+  - 旧代码峰值: ~82GB (output_hidden_states 存 48 层 ~6GB + labels→fp32 logits ~+8GB)
 """
 
 import os
@@ -27,6 +31,9 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
+# PyTorch CUDA 内存分配器: 允许动态释放缓存段, 减少碎片化 OOM
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 # ── 【防爆盾 0】网络/遥测静默 ──
 # 0a: 禁止 Unsloth 连接 HuggingFace 上报统计 (国内超时 120s)
