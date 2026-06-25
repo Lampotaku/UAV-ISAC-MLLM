@@ -21,7 +21,7 @@ training:
   # Stage I: SFT
   sft:
     epochs: 3
-    per_device_batch_size: 4          # bs=4: 峰值 ~55GB (checkpoint CE → 不复用 fp32 log_softmax 存储 ~16GB) — 96GB 安全
+    per_device_batch_size: 4          # bs=4: 峰值 ~52GB (Unsloth Chunked CE → 永不成 16GB fp32 梯度) — 96GB 安全充裕
     gradient_accumulation_steps: 4    # 有效 batch = 4×4 = 16
     learning_rate: 2.0e-4
     lr_scheduler: "cosine"

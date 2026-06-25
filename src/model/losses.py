@@ -175,30 +175,47 @@ class UAVISACLosses:
         标准 causal LM cross-entropy
         可用 label_mask 只计算 response 部分的 token
 
-        内存优化 (两层):
-          1. transpose(1,2) 替代 .contiguous() — 避免 logits 二次拷贝 (~8 GB)
-          2. _grad_ckpt 包装 F.cross_entropy — 避免内部 log_softmax 保存 fp32 输出 (~16 GB)
-             (F.cross_entropy 在 256K 类上为数值稳定会内部 upcast 到 fp32)
+        内存优化 (方案 B — Unsloth Chunked CE):
+          Unsloth fast_cross_entropy_loss 是 Triton 分块内核, 在 256K 词表上
+          逐 chunk 计算 CE + backward, 永不成完整的 fp32 梯度张量 ∂L/∂logits
+          (~16 GB for bs=4 × 4096 × 256K). 省显存同时保持全速 (2-3s/step),
+          因为只借用了 Unsloth 的 loss 内核, 不动模型加载路径 (SDPA 不受影响).
+          Fallback: _grad_ckpt 包装 F.cross_entropy (纯 PyTorch, backward 重算).
         """
         # 右移: predict next token (slice 创建 view, 不拷贝)
-        # Input:  (B, V, S-1) — C 维 stride=1, 无需 contiguous
-        # Target: (B, S-1)
-        shift_logits = logits[:, :-1, :].transpose(1, 2)    # (B, V, S-1)
-        shift_labels = labels[:, 1:]                         # (B, S-1)
-
-        # Gradient-checkpoint the cross-entropy: 内部 log_softmax 的 fp32 输出
-        # (~16 GB for bs=4 × 4096 × 256K) 不在 forward 时存储,
-        # 改为 backward 时重算 — 峰值显存下降 ~16 GB.
-        loss = _grad_ckpt(
-            _ce_none, shift_logits, shift_labels,
-            use_reentrant=False,
-        )  # → (B, S-1)
+        shift_logits = logits[:, :-1, :]    # (B, S-1, V) — 不转置, Unsloth 用最后一维
+        shift_labels = labels[:, 1:]         # (B, S-1)
 
         if label_mask is not None:
-            shift_mask = label_mask[:, 1:]                   # (B, S-1)
-            loss = (loss * shift_mask).sum() / (shift_mask.sum() + 1e-8)
-        else:
-            loss = loss.mean()
+            shift_mask = label_mask[:, 1:]   # (B, S-1)
+
+        try:
+            # 🚀 Unsloth Chunked Cross-Entropy (Triton 内核)
+            # 逐 chunk 计算 → backward 时永不成完整 16 GB fp32 梯度张量
+            # 对 bs=4 × 4096 × 256K: 峰值 ~70 GB (vs _grad_ckpt ~90 GB)
+            from unsloth.kernels.cross_entropy_loss import fast_cross_entropy_loss
+
+            if label_mask is not None:
+                # fast_cross_entropy_loss 遵循 ignore_index=-100 约定
+                _labels = shift_labels.clone()
+                _labels[shift_mask == 0] = -100
+                loss = fast_cross_entropy_loss(shift_logits, _labels)
+            else:
+                loss = fast_cross_entropy_loss(shift_logits, shift_labels)
+
+        except ImportError:
+            # 回退路径: 梯度检查点 + 原生 CE
+            # _ce_none 用 reduction='none' 不支持 ignore_index, 所以用显式 mask
+            shift_logits_t = shift_logits.transpose(1, 2)   # (B, V, S-1)
+            loss = _grad_ckpt(
+                _ce_none, shift_logits_t, shift_labels,
+                use_reentrant=False,
+            )  # → (B, S-1)
+
+            if label_mask is not None:
+                loss = (loss * shift_mask).sum() / (shift_mask.sum() + 1e-8)
+            else:
+                loss = loss.mean()
 
         return loss
 

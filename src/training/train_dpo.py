@@ -12,7 +12,8 @@ L_II = L_DPO + μ * L_SFT + λ_ctl * L_ctl + λ_sep * L_sep
 
 硬件: RTX PRO 6000 96GB AutoDL
   - 需要同时加载 reference model (冻结)
-  - bf16 双模型 (~48GB) + 4×logits bf16 (~4GB bs=1) + log_softmax fp32 (~4GB, 已 checkpoint) + 激活 ≈ 65-75GB (bs=1, 96GB 安全)
+  - bf16 双模型 (~48GB) + 4×logits bf16 (~4GB bs=1) + log_softmax fp32 (~4GB, _grad_ckpt 避免 forward 存储) + 激活 ≈ 65-75GB (bs=1, 96GB 安全)
+  - 注意: Unsloth fast_cross_entropy_loss 只对 SFT 的 scalar CE 有分块内核, DPO 需要 per-token log-prob 故仍用 _grad_ckpt
 """
 
 import os
@@ -82,7 +83,11 @@ def _logp_gather(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
     log_softmax + gather at target indices — thin wrapper for _grad_ckpt.
 
     必须定义在模块级别, _grad_ckpt(use_reentrant=False) 需要 pickle-able 的函数引用.
-    避免 F.log_softmax 在 256K 类上内部 upcast 到 fp32 后保存输出 (~16 GB).
+    避免 F.log_softmax 在 256K 类上内部 upcast 到 fp32 后保存输出 (DPO bs=1 → ~4 GB;
+    SFT bs=4 → ~16 GB, 但 SFT 走 Unsloth Chunked CE, 不经过此函数).
+
+    注意: Unsloth fast_cross_entropy_loss 返回标量 CE, 无法用于 per-token log-prob.
+    因此 DPO 仍用 _grad_ckpt, 4 GB 峰值对 96 GB GPU 安全.
     """
     log_probs = torch.nn.functional.log_softmax(logits, dim=1)
     return log_probs.gather(1, labels.unsqueeze(1)).squeeze(1)
@@ -100,7 +105,8 @@ def _compute_logprob(
 
     内存优化 (两层):
       1. transpose(1,2) 替代 .contiguous() — 避免 logits 二次拷贝 (~2 GB per tensor)
-      2. _grad_ckpt 包装 log_softmax — 避免内部 fp32 输出存储 (~4-16 GB)
+      2. _grad_ckpt 包装 log_softmax — 避免内部 fp32 输出存储 (DPO bs=1 → ~4 GB;
+         Unsloth fast_cross_entropy_loss 不可用 → 返回标量 CE 而非 per-token log-prob)
     """
     # 右移: predict next token (全部是 view, 不拷贝 ~2 GB per tensor)
     shift_logits = logits[:, :-1, :].transpose(1, 2)   # (B, V, S-1)

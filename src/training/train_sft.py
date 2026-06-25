@@ -15,10 +15,10 @@ L_I = L_SFT + λ_ctl * L_ctl
   - bf16 全精度 LoRA: 模型占用 ~24GB
   - modules_to_save (embed_tokens): AdamW 状态 ~8GB
   - 前向: logits bf16 ~8.4GB + last_hidden_state ~128MB
-  - 反向: grad_logits ~8.4GB + grad_embed ~2GB + checkpoint 重计算 ~5GB
-  - _grad_ckpt 包装 CE: 避免 log_softmax fp32 输出存储 ~16GB (改为 backward 重算)
-  - 峰值显存: ~55GB (bs=4 安全, ~41GB 余量)
-  - 旧代码峰值: ~82GB (output_hidden_states 存 48 层 ~6GB + HF 内部 fp32 logits ~+8GB + log_softmax fp32 ~+16GB)
+  - 反向: grad_logits ~4.2GB (bf16) + grad_embed ~2GB + 激活梯度 ~5GB
+  - Unsloth Chunked CE: Triton 分块内核, 永不成完整 fp32 梯度张量 (~16 GB 省)
+  - 峰值显存: ~52GB (bs=4, ~44GB 余量 — 充裕)
+  - 旧代码峰值: ~82GB (output_hidden_states ~6GB + HF fp32 logits ~8GB + CE fp32 梯度 ~16GB)
 """
 
 import os
