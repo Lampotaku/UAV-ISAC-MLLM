@@ -29,7 +29,7 @@
 
 ### 1. 烟雾测试
 
-在 AutoDL RTX 5090 服务器上运行 5 环境的烟雾测试：
+在 AutoDL RTX PRO 6000 服务器上运行 5 环境的烟雾测试：
 
 ```bash
 python scripts/generate_data.py --num-env 5 --num-restarts 10 --save-every 1 \

@@ -1,0 +1,51 @@
+---
+type: reference
+status: current
+stage: all
+last_updated: 2026-06-26
+---
+
+# Bug Registry
+
+## 严重度定义
+
+| 级别 | 定义 | 示例 |
+|------|------|------|
+| **P0** | 训练/数据无效，或结果不可用 | 所有 SFT 响应截断、物理约束违反 |
+| **P1** | 训练运行但严重降级 | DPO validation 被绕过 |
+| **P2** | 次优但可运行 | 硬编码常数的消除 |
+| **P3** | 装饰性 / 未来增强 | 文档改进 |
+
+## 已解决 Bugs
+
+| # | Bug | 严重度 | 阶段 | 文件 |
+|---|-----|--------|------|------|
+| 1 | 物理约束违反 (SCA-FP 随机初始化) | P0 | datagen | [physical_constraint.md](resolved/physical_constraint.md) |
+| 2 | 环境多样性崩溃 (RNG pickle) | P0 | datagen | [rng_diversity_collapse.md](resolved/rng_diversity_collapse.md) |
+| 3 | 响应 JSON 截断 (BPE 碎片化) | P0 | datagen | [response_token_overflow.md](resolved/response_token_overflow.md) |
+| 4 | 服务器运行时错误 (Blackwell 8 连击) | P0 | sft | [server_runtime_errors.md](resolved/server_runtime_errors.md) |
+| 5 | 训练代码 Bug (scheduler/zero_grad/LR) | P0 | sft | [training_code_bugs.md](resolved/training_code_bugs.md) |
+| 6 | OOM 1-5 (HF wrapper→CE→CheckpointError) | P0 | sft | [oom_1_through_5.md](resolved/oom_1_through_5.md) |
+
+**全部 P0/P1 bug 已解决。**
+
+## 开放 Issues
+
+| # | Issue | 严重度 | 阶段 | 文件 |
+|---|-------|--------|------|------|
+| 1 | 验证缺口审计 (20 项) | P0-P2 | all | [verification_gaps.md](open/verification_gaps.md) |
+
+## 如何登记新 Bug
+
+1. 在 `resolved/` 或 `open/` 中创建新文件
+2. 使用 [bug postmortem 模板](../07_conventions/bug_postmortem_template.md)
+3. 添加 metadata header (YAML frontmatter)
+4. 更新本文件 (README) 的对应表格
+5. 更新 [00_current/status.md](../00_current/status.md) 如果该 bug 是新的 blocker
+
+## Bug 文件命名
+
+```
+{short_kebab_description}.md
+```
+例: `physical_constraint.md`, `rng_diversity_collapse.md`

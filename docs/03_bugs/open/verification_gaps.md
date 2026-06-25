@@ -77,7 +77,7 @@ print(f"Actual response tokens: {resp_tokens}  (budget: 1024)")
 
 ---
 
-### P0-2: Unsloth 4-bit 在 RTX 5090 Blackwell 上的实际兼容性 🔴
+### P0-2: Unsloth 4-bit 在 RTX PRO 6000 Blackwell 上的实际兼容性 🔴
 
 **现状**: `gemma_isac.py:69` 尝试 `from unsloth import FastLanguageModel`。CLAUDE.md 注明 "bitsandbytes 不支持 Blackwell"。
 
@@ -89,7 +89,7 @@ print(f"Actual response tokens: {resp_tokens}  (budget: 1024)")
 
 **验证方法**:
 ```python
-# 烟雾测试 — 在 RTX 5090 上尝试加载
+# 烟雾测试 — 在 RTX PRO 6000 上尝试加载
 from unsloth import FastLanguageModel
 import torch
 model, tokenizer = FastLanguageModel.from_pretrained(
@@ -263,15 +263,15 @@ python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained
 
 ---
 
-### P2-6: DPO Reference Model 内存 — 32GB 够吗
+### P2-6: DPO Reference Model 内存 — 96GB 够吗
 
 **风险**: DPO 需要同时加载：
-- 训练模型（4-bit LoRA）= ~8-10GB
-- Reference 模型（4-bit frozen）= ~8-10GB
-- 优化器状态 + 梯度 + 激活 = ~10-15GB
-- **总计: 26-35GB** — 逼近或超出 32GB 上限
+- 训练模型 (bf16 + LoRA) = ~28GB
+- Reference 模型 (bf16 frozen) = ~24GB
+- 优化器状态 + 梯度 + 激活 = ~23GB
+- **总计: ~75GB / 96GB** — 余量 ~21GB，安全
 
-CLAUDE.md 提到 "DPO reference model 独立加载（不 deepcopy，会 OOM）"，说明这是已知风险点。需要实际测试 VRAM 峰值。
+已知风险: DPO reference model 独立加载（不 deepcopy，会 OOM）。需要实际测试 VRAM 峰值确认预算分析。
 
 **代码位置**: `src/training/train_dpo.py`
 
@@ -359,7 +359,7 @@ P2 (监控级): 10 项 — 断点续跑、精度、初始化、模块名、Sinkh
 
 **最重要的 3 件事**（与之前两个 P0 Bug 同级重要的下一批）：
 1. **用真实 tokenizer 确认 response < 1024 tokens** — 启发式估算可能报假绿灯
-2. **在 RTX 5090 上跑一次 Unsloth 加载** — 如果 Unsloth 不支持 Gemma3 或 Blackwell，整个训练计划需要重新设计
+2. **在 RTX PRO 6000 上跑一次 Unsloth 加载** — 如果 Unsloth 不支持 Gemma3 或 Blackwell，整个训练计划需要重新设计
 3. **确认 HuggingFace 可下载 Gemma3 权重** — gated model，没有权限就全卡住
 
 ---

@@ -2,11 +2,14 @@
 
 **目标**: 用 Gemma 3 12B (LoRA + 约束投影头) 为 UAV-ISAC 的 SCA-FP 数值优化器提供智能热启动。
 
-**交接文档 (新成员必读)**:
-- [docs/05_handoff/16_handoff_01_project_direction.md](docs/05_handoff/16_handoff_01_project_direction.md) — 论文方向
-- [docs/05_handoff/19_handoff_04_post_datagen.md](docs/05_handoff/19_handoff_04_post_datagen.md) — 数据生成完成状态
-- [docs/05_handoff/25_BUG_postmortems_OOM_to_SDPA.md](docs/05_handoff/25_BUG_postmortems_OOM_to_SDPA.md) — OOM 五连杀根因分析 ⭐
-- [docs/05_handoff/26_handoff_07_sft_training_live.md](docs/05_handoff/26_handoff_07_sft_training_live.md) — **当前状态：SFT 训练进行中** ⭐
+**文档导航 (新成员必读 — 2026-06-26 重构)**:
+- [docs/README.md](docs/README.md) — 文档总索引
+- [docs/00_current/status.md](docs/00_current/status.md) — **当前状态** ⭐
+- [docs/00_current/quickstart.md](docs/00_current/quickstart.md) — 从零到训练
+- [docs/01_architecture/problem_formulation.md](docs/01_architecture/problem_formulation.md) — 问题与数学框架
+- [docs/01_architecture/system_design.md](docs/01_architecture/system_design.md) — 模块拓扑与数据流
+- [docs/02_training_log/oom_incidents.md](docs/02_training_log/oom_incidents.md) — OOM 五连杀根因分析 ⭐
+- [docs/06_decisions/adr_001_unsloth_removal.md](docs/06_decisions/adr_001_unsloth_removal.md) — Plan A 决策
 
 ## 当前状态
 
@@ -26,9 +29,9 @@
 | 本地 | Windows, `h:\Projects\UAV` |
 | 服务器 | AutoDL RTX PRO 6000 96GB, `/root/UAV-ISAC-MLLM` |
 | 数据盘 | `/root/autodl-tmp/` (系统盘仅 30GB) |
-| GPU | Blackwell sm_120, CUDA 13.2, Driver 595.58.03 |
+| GPU | Blackwell sm_120, CUDA 13.0, Driver 595.58.03 |
 | 精度 | bf16 全精度 LoRA (96GB 无需量化) |
-| Python | 3.11, conda env: `uavmllm` |
+| Python | 3.12, conda env: `uavmllm` |
 
 ## 架构速览
 
