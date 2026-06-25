@@ -48,11 +48,10 @@ os.environ["TORCHINDUCTOR_FLEX_ATTENTION"] = "0"
 # 过拟合测试不需要 torch.compile, 彻底切断 Inductor 编译链路
 os.environ["TORCH_COMPILE_DISABLE"] = "1"
 
-# ── 【防爆盾 2】Unsloth 强插队 ──
-# 必须在 torch / transformers 之前导入, 确保底层 Triton 补丁 100% 打上!
-# 否则 HF 先初始化 → Unsloth 补丁失效 → 退化回 PyTorch 原生 attention
-# → Inductor 自动捕捉 → FlexAttention → OOM
-import unsloth
+# ── 【防爆盾 2】已移除全局 import unsloth ──
+# Unsloth 全局导入会 monkey-patch transformers 模型加载,
+# 对 Gemma 3 强制降级到 eager attention → 16-21s/step.
+# Chunked CE 通过 src/model/losses.py 局部导入, 不受影响.
 
 import numpy as np
 import yaml

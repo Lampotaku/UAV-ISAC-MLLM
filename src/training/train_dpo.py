@@ -42,9 +42,10 @@ os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 os.environ["TORCHINDUCTOR_FLEX_ATTENTION"] = "0"
 os.environ["TORCH_COMPILE_DISABLE"] = "1"
 
-# ── 【防爆盾 2】Unsloth 强插队 ──
-# 必须在 torch / transformers 之前导入, 确保底层 Triton 补丁 100% 打上!
-import unsloth
+# ── 【防爆盾 2】已移除全局 import unsloth ──
+# Unsloth 全局导入会 monkey-patch transformers 模型加载,
+# 对 Gemma 3 强制降级到 eager attention → 16-21s/step.
+# DPO 用 _grad_ckpt (非 Unsloth kernel), 完全不需要全局导入.
 
 import yaml
 import argparse
