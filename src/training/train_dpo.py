@@ -12,7 +12,7 @@ L_II = L_DPO + μ * L_SFT + λ_ctl * L_ctl + λ_sep * L_sep
 
 硬件: RTX PRO 6000 96GB AutoDL
   - 需要同时加载 reference model (冻结)
-  - bf16 双模型 (~48GB) + 4×logits fp32 (~15GB) + 激活 ≈ 75-85GB (bs=1, 96GB 安全)
+  - bf16 双模型 (~48GB) + 4×logits bf16 (~4GB bs=1) + log_softmax fp32 (~4GB, 已 checkpoint) + 激活 ≈ 65-75GB (bs=1, 96GB 安全)
 """
 
 import os
@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import torch
+from torch.utils.checkpoint import checkpoint as _grad_ckpt
 from torch.utils.data import Dataset, DataLoader
 
 # ── 【防爆盾 3】代码级物理超度 FlexAttention ──
@@ -76,6 +77,17 @@ from src.data.dataset import DPODataset
 # Helper: compute per-sample log-probability from logits
 # ================================================================
 
+def _logp_gather(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    """
+    log_softmax + gather at target indices — thin wrapper for _grad_ckpt.
+
+    必须定义在模块级别, _grad_ckpt(use_reentrant=False) 需要 pickle-able 的函数引用.
+    避免 F.log_softmax 在 256K 类上内部 upcast 到 fp32 后保存输出 (~16 GB).
+    """
+    log_probs = torch.nn.functional.log_softmax(logits, dim=1)
+    return log_probs.gather(1, labels.unsqueeze(1)).squeeze(1)
+
+
 def _compute_logprob(
     logits: torch.Tensor,   # (B, seq_len, vocab_size)
     labels: torch.Tensor,   # (B, seq_len)  — prompt 部分填 -100
@@ -86,8 +98,9 @@ def _compute_logprob(
 
     返回 (B,) tensor, 每个元素是 log π(response | prompt)
 
-    内存优化: 不调用 .contiguous(), 用 transpose 将 class 维度
-    移到 dim=1 后直接传给 log_softmax (class 维 stride=1, 无需拷贝).
+    内存优化 (两层):
+      1. transpose(1,2) 替代 .contiguous() — 避免 logits 二次拷贝 (~2 GB per tensor)
+      2. _grad_ckpt 包装 log_softmax — 避免内部 fp32 输出存储 (~4-16 GB)
     """
     # 右移: predict next token (全部是 view, 不拷贝 ~2 GB per tensor)
     shift_logits = logits[:, :-1, :].transpose(1, 2)   # (B, V, S-1)
@@ -95,8 +108,13 @@ def _compute_logprob(
     shift_mask = label_mask[:, 1:]                       # (B, S-1)
     safe_labels = shift_labels.masked_fill(shift_labels < 0, 0)
 
-    log_probs = torch.nn.functional.log_softmax(shift_logits, dim=1)  # softmax over class dim
-    per_token_logp = log_probs.gather(1, safe_labels.unsqueeze(1)).squeeze(1)  # (B, S-1)
+    # Gradient-checkpoint the log_softmax: 内部 fp32 输出不在 forward 时存储,
+    # 改为 backward 时重算 — 峰值显存下降 ~4-16 GB (取决于 bs).
+    per_token_logp = _grad_ckpt(
+        _logp_gather, shift_logits, safe_labels,
+        use_reentrant=False,
+    )  # → (B, S-1)
+
     masked = per_token_logp * shift_mask
     seq_logp = masked.sum(dim=-1)  # SUM not mean — DPO needs joint log-prob Σ_t log π(y_t|...)
     return seq_logp

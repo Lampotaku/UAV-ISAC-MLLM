@@ -22,7 +22,18 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint as _grad_ckpt
 from typing import Dict, Optional, Tuple
+
+
+def _ce_none(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    """
+    Cross-entropy with reduction='none' — thin wrapper for _grad_ckpt.
+
+    必须定义在模块级别 (而非 lambda), _grad_ckpt(use_reentrant=False) 需要
+    pickle-able 的函数引用.
+    """
+    return F.cross_entropy(logits, labels, reduction="none")
 
 
 class UAVISACLosses:
@@ -164,9 +175,10 @@ class UAVISACLosses:
         标准 causal LM cross-entropy
         可用 label_mask 只计算 response 部分的 token
 
-        内存优化: 不调用 .contiguous()/.view() 来避免 logits 二次拷贝 (~8 GB).
-        改用 movedim 将 class 维度放到 dim=1, 直接传 3D tensor 给 F.cross_entropy.
-        (cross_entropy 支持 (N,C,d1,...) 输入, softmax 在 C 维上做, 而 C 维 stride=1)
+        内存优化 (两层):
+          1. transpose(1,2) 替代 .contiguous() — 避免 logits 二次拷贝 (~8 GB)
+          2. _grad_ckpt 包装 F.cross_entropy — 避免内部 log_softmax 保存 fp32 输出 (~16 GB)
+             (F.cross_entropy 在 256K 类上为数值稳定会内部 upcast 到 fp32)
         """
         # 右移: predict next token (slice 创建 view, 不拷贝)
         # Input:  (B, V, S-1) — C 维 stride=1, 无需 contiguous
@@ -174,10 +186,12 @@ class UAVISACLosses:
         shift_logits = logits[:, :-1, :].transpose(1, 2)    # (B, V, S-1)
         shift_labels = labels[:, 1:]                         # (B, S-1)
 
-        loss = F.cross_entropy(
-            shift_logits,      # cross_entropy 在 dim=1 (C 维) 上做 log_softmax
-            shift_labels,      # 支持 (N, d1) target 匹配 (N, C, d1) input
-            reduction="none",
+        # Gradient-checkpoint the cross-entropy: 内部 log_softmax 的 fp32 输出
+        # (~16 GB for bs=4 × 4096 × 256K) 不在 forward 时存储,
+        # 改为 backward 时重算 — 峰值显存下降 ~16 GB.
+        loss = _grad_ckpt(
+            _ce_none, shift_logits, shift_labels,
+            use_reentrant=False,
         )  # → (B, S-1)
 
         if label_mask is not None:
