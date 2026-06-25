@@ -21,8 +21,8 @@ training:
   # Stage I: SFT
   sft:
     epochs: 3
-    per_device_batch_size: 4          # bs=4: 峰值 ~52GB (Unsloth Chunked CE → 永不成 16GB fp32 梯度) — 96GB 安全充裕
-    gradient_accumulation_steps: 4    # 有效 batch = 4×4 = 16
+    per_device_batch_size: 1          # bs=1: CE fp32 梯度 ~4GB (vs bs=4 ~16GB) — 纯 PyTorch, 无 Unsloth
+    gradient_accumulation_steps: 16   # 有效 batch = 1×16 = 16 (数学等价于 bs=4×4)
     learning_rate: 2.0e-4
     lr_scheduler: "cosine"
     warmup_ratio: 0.03

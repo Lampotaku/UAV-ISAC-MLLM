@@ -22,18 +22,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.checkpoint import checkpoint as _grad_ckpt
 from typing import Dict, Optional, Tuple
-
-
-def _ce_none(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-    """
-    Cross-entropy with reduction='none' — thin wrapper for _grad_ckpt.
-
-    必须定义在模块级别 (而非 lambda), _grad_ckpt(use_reentrant=False) 需要
-    pickle-able 的函数引用.
-    """
-    return F.cross_entropy(logits, labels, reduction="none")
 
 
 class UAVISACLosses:
@@ -175,51 +164,27 @@ class UAVISACLosses:
         标准 causal LM cross-entropy
         可用 label_mask 只计算 response 部分的 token
 
-        内存优化 (方案 B — Unsloth Chunked CE):
-          Unsloth fast_cross_entropy_loss 是 Triton 分块内核, 在 256K 词表上
-          逐 chunk 计算 CE + backward, 永不成完整的 fp32 梯度张量 ∂L/∂logits
-          (~16 GB for bs=4 × 4096 × 256K). 省显存同时保持全速 (2-3s/step),
-          因为只借用了 Unsloth 的 loss 内核, 不动模型加载路径 (SDPA 不受影响).
-          Fallback: _grad_ckpt 包装 F.cross_entropy (纯 PyTorch, backward 重算).
+        纯 PyTorch 原生实现:
+          直接用 F.cross_entropy 展平计算, 不依赖 Unsloth (会产生
+          CheckpointError — 局部 import 仍触发全局 monkey-patch, 导致
+          forward/recompute 张量数不一致 68≠65) 也不依赖梯度检查点.
+          bs=1 时单步 CE 的 fp32 梯度约 4GB, 通过 grad_accum=16
+          保持有效 batch=16 且显存安全.
         """
         # 右移: predict next token
-        # 必须 .contiguous(): [:, :-1, :] 对中间维切片产生非连续 stride,
-        # Unsloth 内核的 .view(batch*seq_len, d) 要求连续内存.
-        # bf16 拷贝 ~8 GB, 砍掉 fp32 梯度 16 GB 后绰绰有余.
         shift_logits = logits[:, :-1, :].contiguous()    # (B, S-1, V)
-        shift_labels = labels[:, 1:]         # (B, S-1)
+        shift_labels = labels[:, 1:].clone()              # (B, S-1)
 
         if label_mask is not None:
-            shift_mask = label_mask[:, 1:]   # (B, S-1)
+            shift_mask = label_mask[:, 1:]                # (B, S-1)
+            shift_labels[shift_mask == 0] = -100
 
-        try:
-            # 🚀 Unsloth Chunked Cross-Entropy (Triton 内核)
-            # 逐 chunk 计算 → backward 时永不成完整 16 GB fp32 梯度张量
-            # 对 bs=4 × 4096 × 256K: 峰值 ~70 GB (vs _grad_ckpt ~90 GB)
-            from unsloth.kernels.cross_entropy_loss import fast_cross_entropy_loss
-
-            if label_mask is not None:
-                # fast_cross_entropy_loss 遵循 ignore_index=-100 约定
-                _labels = shift_labels.clone()
-                _labels[shift_mask == 0] = -100
-                loss = fast_cross_entropy_loss(shift_logits, _labels)
-            else:
-                loss = fast_cross_entropy_loss(shift_logits, shift_labels)
-
-        except ImportError:
-            # 回退路径: 梯度检查点 + 原生 CE
-            # _ce_none 用 reduction='none' 不支持 ignore_index, 所以用显式 mask
-            shift_logits_t = shift_logits.transpose(1, 2)   # (B, V, S-1)
-            loss = _grad_ckpt(
-                _ce_none, shift_logits_t, shift_labels,
-                use_reentrant=False,
-            )  # → (B, S-1)
-
-            if label_mask is not None:
-                loss = (loss * shift_mask).sum() / (shift_mask.sum() + 1e-8)
-            else:
-                loss = loss.mean()
-
+        # 展平为 2D (N, V) 匹配 F.cross_entropy 标准输入
+        loss = F.cross_entropy(
+            shift_logits.view(-1, shift_logits.size(-1)),
+            shift_labels.view(-1),
+            ignore_index=-100,
+        )
         return loss
 
     def compute_stage1_total(

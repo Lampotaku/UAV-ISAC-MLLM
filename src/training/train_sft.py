@@ -16,9 +16,8 @@ L_I = L_SFT + λ_ctl * L_ctl
   - modules_to_save (embed_tokens): AdamW 状态 ~8GB
   - 前向: logits bf16 ~8.4GB + last_hidden_state ~128MB
   - 反向: grad_logits ~4.2GB (bf16) + grad_embed ~2GB + 激活梯度 ~5GB
-  - Unsloth Chunked CE: Triton 分块内核, 永不成完整 fp32 梯度张量 (~16 GB 省)
-  - 峰值显存: ~52GB (bs=4, ~44GB 余量 — 充裕)
-  - 旧代码峰值: ~82GB (output_hidden_states ~6GB + HF fp32 logits ~8GB + CE fp32 梯度 ~16GB)
+  - CE 损失: 纯 PyTorch F.cross_entropy, bs=1 时 fp32 梯度 ~4GB (bs=4 ~16GB → 省)
+  - 峰值显存: ~48GB (bs=1, grad_accum=16, ~48GB 余量 — 充裕)
 """
 
 import os
@@ -47,11 +46,11 @@ os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 os.environ["TORCHINDUCTOR_FLEX_ATTENTION"] = "0"
 os.environ["TORCH_COMPILE_DISABLE"] = "1"
 
-# ── 【防爆盾 2】已移除全局 import unsloth ──
-# Unsloth 全局导入会 monkey-patch transformers 模型加载,
-# 对 Gemma 3 强制降级到 eager attention → 16-21s/step.
-# 现在只在 src/model/losses.py 中局部导入 fast_cross_entropy_loss,
-# 不劫持模型加载, SDPA 保持 2-3s/step.
+# ── 【防爆盾 2】项目已彻底肃清 Unsloth ──
+# Unsloth 即使局部导入 (from unsloth.kernels...) 也会触发全局 monkey-patch,
+# 导致 grad checkpoint 在 forward/recompute 间张量数不一致 (68≠65) → CheckpointError.
+# 现在全项目 0 处 unsloth 引用 — 纯 PyTorch F.cross_entropy + bs=1/grad_accum=16.
+# 模型加载走原生 HF + SDPA → 2-3s/step.
 
 import yaml
 import argparse

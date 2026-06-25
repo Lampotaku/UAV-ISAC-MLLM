@@ -48,10 +48,9 @@ os.environ["TORCHINDUCTOR_FLEX_ATTENTION"] = "0"
 # 过拟合测试不需要 torch.compile, 彻底切断 Inductor 编译链路
 os.environ["TORCH_COMPILE_DISABLE"] = "1"
 
-# ── 【防爆盾 2】已移除全局 import unsloth ──
-# Unsloth 全局导入会 monkey-patch transformers 模型加载,
-# 对 Gemma 3 强制降级到 eager attention → 16-21s/step.
-# Chunked CE 通过 src/model/losses.py 局部导入, 不受影响.
+# ── 【防爆盾 2】项目已彻底肃清 Unsloth ──
+# Unsloth 局部导入也会全局 monkey-patch → CheckpointError (68≠65).
+# 全项目 0 处 unsloth 引用, 纯 PyTorch CE + bs=1/grad_accum=16.
 
 import numpy as np
 import yaml
