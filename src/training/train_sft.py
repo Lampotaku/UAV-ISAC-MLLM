@@ -9,16 +9,22 @@ L_I = L_SFT + λ_ctl * L_ctl
   - S=5000 环境样本
   - 3 epochs
   - lr=2e-4, cosine scheduler
-  - 有效 batch = 16 (bs=4 × grad_accum=4)
+  - 有效 batch = 16 (bs=2 × grad_accum=8)
+  - 5000/bs=2 = 2500 micro-batches/epoch, ~313 optimizer steps/epoch
 
 硬件: RTX PRO 6000 96GB AutoDL
   - bf16 全精度 LoRA: 模型占用 ~24GB
   - modules_to_save (embed_tokens): AdamW 状态 ~8GB
-  - 前向: logits bf16 ~4.2GB (bs=2×4096×256K) + last_hidden_state ~128MB
-  - 反向: grad_logits ~4.2GB (bf16) + grad_embed ~2GB + 激活梯度 ~5GB
-  - CE 损失: 纯 PyTorch F.cross_entropy, bs=2 时 fp32 中间约 ~8GB
-  - 峰值显存: ~65GB (bs=2, seq=3456, grad_accum=8, ~31GB 余量)
-  - SDPA: ~1.5-2s/step (seq 4096→3456 省 ~40% 注意力计算, 1250 steps × 3 epochs ≈ 1.5h)
+  - 前向: logits bf16 ~3.5GB (bs=2×3456×256K) + last_hidden_state ~128MB
+  - 反向: grad_logits ~3.5GB (bf16) + grad_embed ~2GB + 激活梯度 ~5GB
+  - CE 损失: 纯 PyTorch F.cross_entropy, bs=2 时 fp32 中间约 ~7GB
+  - 实测峰值: ~78GB (bs=2, seq=3456 or 4096, grad_accum=8, ~20GB 余量)
+
+  实测速度 (server RTX PRO 6000):
+  - bs=2/seq=4096: ~4.1s/micro-batch, 2500 steps/epoch → ~2.9h/epoch, ~8.7h total
+  - bs=2/seq=3456 (预期): ~3.3s/micro-batch, ~2.3h/epoch, ~7h total
+  - bs=1/seq=4096 (旧): ~2.5s/micro-batch, 5000 steps/epoch → ~3.5h/epoch
+  - bs=2 每步更慢但步数减半 → epoch 吞吐 +18%, 全训练省 ~2h
 """
 
 import os
