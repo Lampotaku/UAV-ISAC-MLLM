@@ -18,7 +18,7 @@ L_I = L_SFT + λ_ctl * L_ctl
   - 反向: grad_logits ~4.2GB (bf16) + grad_embed ~2GB + 激活梯度 ~5GB
   - CE 损失: 纯 PyTorch F.cross_entropy, bs=2 时 fp32 中间约 ~8GB
   - 峰值显存: ~70GB (bs=2, grad_accum=8, ~26GB 余量)
-  - FA2 预期: ~1.5-2s/step (vs SDPA ~2.5s/step)
+  - SDPA: ~2s/step (bs=2, 1250 steps × 3 epochs ≈ 2h)
 """
 
 import os
