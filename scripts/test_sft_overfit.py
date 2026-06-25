@@ -167,13 +167,58 @@ def run_overfit_test(config_path: str, data_path: str, n_samples: int,
     model = model.to(device)
     print(f"  Model loaded in {time.time() - t0:.1f}s")
 
-    # ── 检查可训练参数 ──
+    # 诊断: 验证所有参数都在目标设备上
+    devices = set()
+    for name, param in model.named_parameters():
+        devices.add(str(param.device))
+    print(f"  [DIAG] Parameter devices: {devices}")
+    if len(devices) > 1:
+        fail(f"Parameters are on multiple devices: {devices} — device placement broken!")
+        # 列出不在目标设备上的参数
+        for name, param in model.named_parameters():
+            if param.device != device:
+                print(f"    OFF-DEVICE: {name} on {param.device} (target: {device})")
+        return False
+    elif device.type == "cuda" and "cuda" not in str(list(devices)[0]):
+        fail(f"Parameters on {list(devices)[0]} but target is {device} — model.to() failed!")
+        return False
+
+    # ── 检查可训练参数 + 深度诊断 ──
     trainable_count = sum(
         p.numel() for p in model.parameters() if p.requires_grad
     )
     print(f"  Trainable params: {trainable_count:,}")
     if trainable_count == 0:
         fail("No trainable parameters! Check LoRA + projection head setup.")
+
+    # 诊断: 列出前 5 个可训练参数的 name / device / shape
+    print(f"\n  [DIAG] First 5 trainable parameters:")
+    trainable_params = [(n, p) for n, p in model.named_parameters() if p.requires_grad]
+    for i, (name, param) in enumerate(trainable_params[:5]):
+        print(f"    {i+1}. {name}  |  device={param.device}  |  shape={tuple(param.shape)}  |  dtype={param.dtype}")
+
+    # 诊断: 检查 projection_head 是否在 model.named_parameters() 中
+    proj_names = [n for n, p in model.named_parameters() if "projection_head" in n]
+    print(f"\n  [DIAG] Projection head params in model.named_parameters(): {len(proj_names)}")
+    if proj_names:
+        for n in proj_names[:3]:
+            p = dict(model.named_parameters())[n]
+            print(f"    {n}  |  device={p.device}  |  requires_grad={p.requires_grad}")
+
+    # 诊断: 检查 base_model (PeftModel) 的可训练参数
+    lora_check = [(n, p) for n, p in model.base_model.named_parameters() if p.requires_grad]
+    print(f"\n  [DIAG] Trainable params in model.base_model.named_parameters(): {len(lora_check)}")
+    if lora_check:
+        for name, param in lora_check[:5]:
+            print(f"    {name}  |  device={param.device}  |  shape={tuple(param.shape)}")
+    else:
+        fail("ZERO trainable params in model.base_model! LoRA not applied?")
+        # 深度检查: model.base_model 到底是什么类型?
+        print(f"  [DIAG] type(model.base_model) = {type(model.base_model)}")
+        print(f"  [DIAG] type(model.base_model).__mro__ = {type(model.base_model).__mro__}")
+        # 列出 model.base_model 的属性
+        attrs = [a for a in dir(model.base_model) if not a.startswith('_')]
+        print(f"  [DIAG] model.base_model attrs: {attrs}")
         return False
 
     # ── 加载数据 ──
@@ -207,11 +252,22 @@ def run_overfit_test(config_path: str, data_path: str, n_samples: int,
     ]
     print(f"  Optimizing: Projection Head ({len(proj_params)} tensors), "
           f"LoRA ({len(lora_params)} tensors)")
+    if len(proj_params) == 0:
+        fail("ZERO projection_head parameters found for optimizer!")
+        return False
+    if len(lora_params) == 0:
+        fail("ZERO LoRA parameters found for optimizer!")
+        return False
 
     optimizer = torch.optim.AdamW([
         {"params": proj_params, "lr": 1e-3},   # 投影头: 从零训练
         {"params": lora_params, "lr": 2e-4},   # LoRA: 与全量 SFT 一致
     ], weight_decay=0.0)
+
+    # 诊断: 验证 optimizer 真的有参数
+    total_opt_params = sum(len(g['params']) for g in optimizer.param_groups)
+    print(f"  [DIAG] Optimizer has {total_opt_params} param groups with "
+          f"{sum(p.numel() for g in optimizer.param_groups for p in g['params']):,} total params")
 
     # ── 损失计算器 ──
     loss_fn = UAVISACLosses(
@@ -231,6 +287,7 @@ def run_overfit_test(config_path: str, data_path: str, n_samples: int,
 
     pbar = tqdm(range(n_steps), desc="Overfitting")
     nan_detected = False
+    first_step_diagnostics_done = False
 
     for step in pbar:
         # 循环使用 5 个样本
@@ -250,6 +307,25 @@ def run_overfit_test(config_path: str, data_path: str, n_samples: int,
             q_current=batch["q_current"] if batch["q_current"].numel() > 0 else None,
             labels=batch["labels"],
         )
+
+        # ── 第一步诊断: hidden states / control_states 是否正常 ──
+        if not first_step_diagnostics_done:
+            print(f"\n  [DIAG] === Step 0 forward diagnostics ===")
+            hs_norm = outputs["hidden_states"].norm().item()
+            cs_norm = outputs["control_states"].norm().item()
+            dq_norm = outputs["delta_q"].norm().item()
+            da_norm = outputs["delta_a"].norm().item()
+            dp_norm = outputs["delta_p"].norm().item()
+            print(f"  hidden_states norm: {hs_norm:.4f} (expect > 100)")
+            print(f"  control_states norm: {cs_norm:.4f} (expect > 10)")
+            print(f"  delta_q norm: {dq_norm:.4f}  delta_a norm: {da_norm:.4f}  delta_p norm: {dp_norm:.4f}")
+            if cs_norm < 1.0:
+                fail(f"control_states norm = {cs_norm:.4f} < 1.0 — control_mask extraction may be broken!")
+            # 检查 control_mask 是否正确 (应该有 8 个 True)
+            ctrl_count = batch["control_mask"].sum().item()
+            print(f"  control_mask True count: {ctrl_count} (expect {model_cfg['control_token']['num_tokens']})")
+            if ctrl_count != model_cfg["control_token"]["num_tokens"]:
+                fail(f"control_mask has {ctrl_count} True positions, expected {model_cfg['control_token']['num_tokens']}!")
 
         # 构造 target dict
         delta_target = {
@@ -285,8 +361,61 @@ def run_overfit_test(config_path: str, data_path: str, n_samples: int,
 
         # 反向传播
         total_loss.backward()
+
+        # ── 第一步诊断: 梯度范数 + 权重变化 ──
+        if not first_step_diagnostics_done:
+            print(f"\n  [DIAG] === Step 0 gradient diagnostics ===")
+            # 检查几个关键参数的梯度
+            grad_samples = []
+            zero_grad_params = []
+            for name, param in model.named_parameters():
+                if param.requires_grad and param.grad is not None:
+                    g_norm = param.grad.norm().item()
+                    grad_samples.append((name, g_norm))
+                    if g_norm == 0.0:
+                        zero_grad_params.append(name)
+            # 按 grad norm 排序，显示最大的 5 个和最小的 5 个
+            grad_samples.sort(key=lambda x: -x[1])
+            print(f"  Top 5 gradients by norm:")
+            for name, gnorm in grad_samples[:5]:
+                print(f"    {name}: grad_norm={gnorm:.6f}")
+            if zero_grad_params:
+                print(f"  {YELLOW}Parameters with ZERO gradient:{RESET}")
+                for name in zero_grad_params[:5]:
+                    print(f"    {name}")
+                if len(zero_grad_params) > 5:
+                    print(f"    ... and {len(zero_grad_params) - 5} more")
+
+            # 保存 step 前权重快照
+            weight_snapshot = {}
+            for name, param in model.named_parameters():
+                if param.requires_grad:
+                    weight_snapshot[name] = param.data.clone()
+
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
+
+        # ── 第一步诊断: 检查权重是否真的变了 ──
+        if not first_step_diagnostics_done:
+            print(f"\n  [DIAG] === Step 0 weight change diagnostics ===")
+            changed = 0
+            unchanged = 0
+            for name, param in model.named_parameters():
+                if param.requires_grad and name in weight_snapshot:
+                    delta = (param.data - weight_snapshot[name]).abs().max().item()
+                    if delta > 1e-10:
+                        changed += 1
+                        if changed <= 5:
+                            print(f"    {name}: max |Δw| = {delta:.6f}")
+                    else:
+                        unchanged += 1
+                        if unchanged <= 3:
+                            print(f"    {YELLOW}{name}: NO CHANGE (Δ=0){RESET}")
+            print(f"  Result: {changed} params changed, {unchanged} UNCHANGED")
+            if unchanged > 0:
+                print(f"  {RED}✗ Some parameters did NOT update after optimizer.step(){RESET}")
+            first_step_diagnostics_done = True
+
         optimizer.zero_grad()
 
         # 记录 (防御性: 剥离可能的计算图, 尽管 compute_stage1_total 已调 .item())
