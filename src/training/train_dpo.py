@@ -308,6 +308,14 @@ def train_stage2(
     global_step = 0
     model.train()
 
+    # ---- LoRA 梯度诊断 (仅观测, 不影响训练) ----
+    lora_params = [
+        p for n, p in model.named_parameters()
+        if p.requires_grad and ('lora_A' in n or 'lora_B' in n)
+    ]
+    if lora_params:
+        logger.info(f"Grad norm diag: {len(lora_params)} LoRA tensors")
+
     for epoch in range(train_cfg["epochs"]):
         progress = tqdm(dpo_dataloader, desc=f"DPO Epoch {epoch+1}/{train_cfg['epochs']}")
 
@@ -414,6 +422,14 @@ def train_stage2(
                 accelerator.backward(total_loss)
 
                 if accelerator.sync_gradients:
+                    # ---- LoRA 总梯度 norm (免费: 梯度已累积完毕) ----
+                    if lora_params:
+                        _gn_total = sum(
+                            p.grad.data.norm().item() ** 2
+                            for p in lora_params if p.grad is not None
+                        ) ** 0.5
+                        metrics["grad_norm_lora_total"] = _gn_total
+
                     accelerator.clip_grad_norm_(
                         model.parameters(),
                         cfg["hardware"]["max_grad_norm"],

@@ -232,6 +232,17 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None):
     global_step = 0
     model.train()
 
+    # ---- LoRA 梯度诊断 (仅观测, 不影响训练) ----
+    # 收集 requires_grad=True 的 LoRA A/B 矩阵, 用于 per-component grad norm
+    lora_params = [
+        p for n, p in model.named_parameters()
+        if p.requires_grad and ('lora_A' in n or 'lora_B' in n)
+    ]
+    grad_diag_interval = train_cfg.get("grad_diag_steps", 200)
+    _diag_pending = False
+    if lora_params:
+        logger.info(f"Grad norm diag: {len(lora_params)} LoRA tensors, every {grad_diag_interval} steps")
+
     for epoch in range(train_cfg["epochs"]):
         progress = tqdm(dataloader, desc=f"Epoch {epoch+1}/{train_cfg['epochs']}")
 
@@ -274,10 +285,53 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None):
                     q_hat=q_hat,
                 )
 
+                # ---- 分量梯度诊断 (每 grad_diag_interval 步, 仅第一 micro-batch) ----
+                # retain_graph=True 会暂留前向图 → 额外 10-15GB, 仅在 sync 间隙运行
+                if _diag_pending and lora_params:
+                    _loss_sft = loss_fn.compute_sft_loss(
+                        outputs["logits"], batch["labels"], batch["label_mask"]
+                    )
+                    _loss_ctl = loss_fn.compute_control_loss(delta_hat, delta_target)
+                    _scaled_ctl = model_cfg["loss"]["lambda_ctl"] * _loss_ctl
+                    try:
+                        _grads_sft = torch.autograd.grad(
+                            _loss_sft, lora_params, retain_graph=True, allow_unused=True
+                        )
+                        _gn_sft = sum(
+                            g.detach().norm().item() ** 2
+                            for g in _grads_sft if g is not None
+                        ) ** 0.5
+                        _grads_ctl = torch.autograd.grad(
+                            _scaled_ctl, lora_params, retain_graph=False, allow_unused=True
+                        )
+                        _gn_ctl = sum(
+                            g.detach().norm().item() ** 2
+                            for g in _grads_ctl if g is not None
+                        ) ** 0.5
+                        # 清零 autograd.grad 写入的 .grad (正常 backward 会重算)
+                        for p in lora_params:
+                            if p.grad is not None:
+                                p.grad.zero_()
+                        metrics["grad_norm_sft"] = _gn_sft
+                        metrics["grad_norm_ctl"] = _gn_ctl
+                        metrics["grad_ratio_ctl_sft"] = _gn_ctl / (_gn_sft + 1e-8)
+                    except RuntimeError as e:
+                        logger.warning(f"Grad diag OOM, disabling: {e}")
+                        lora_params = []  # 永久禁用本 session
+                    _diag_pending = False
+
                 # 反向传播
                 accelerator.backward(total_loss)
 
                 if accelerator.sync_gradients:
+                    # ---- LoRA 总梯度 norm (免费: 梯度已累积完毕, 直接读取 .grad) ----
+                    if lora_params:
+                        _gn_total = sum(
+                            p.grad.data.norm().item() ** 2
+                            for p in lora_params if p.grad is not None
+                        ) ** 0.5
+                        metrics["grad_norm_lora_total"] = _gn_total
+
                     accelerator.clip_grad_norm_(
                         model.parameters(),
                         cfg["hardware"]["max_grad_norm"],
@@ -285,6 +339,10 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None):
                     optimizer.step()
                     scheduler.step()
                     optimizer.zero_grad()
+
+                    # 下一 step 是否需要分量梯度诊断
+                    if (global_step + 1) % grad_diag_interval == 0:
+                        _diag_pending = True
 
             # 仅在真正执行梯度同步 (optimizer step) 后才推进 global_step / scheduler / zero_grad
             # 防止 grad_accum=16 时每个 micro-batch:
