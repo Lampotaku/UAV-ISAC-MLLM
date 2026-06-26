@@ -68,6 +68,7 @@ related: [canonical_config, sft_live, oom_incidents, verification_gaps]
 | 4-8 | OOM 1-5 (HF wrapper, contiguous, GQA, CE, CheckpointError) | P0 | sft | 见 [oom_incidents.md](../02_training_log/oom_incidents.md) |
 | 9-11 | 训练代码 bug (scheduler, zero_grad, LR) | P0 | sft | `4bc1a95`, `a52b4b8` |
 | 12-19 | 服务器运行时错误 (Blackwell 8 连击) | P0 | sft | 见 [server_runtime_errors.md](../03_bugs/resolved/server_runtime_errors.md) |
+| 20 | TensorBoard 日志静默丢失 (init_trackers) | P1 | sft | `8b5b8f1` |
 
 **全部 P0 bug 已闭合。** 详见 [03_bugs/resolved/](../03_bugs/resolved/)
 

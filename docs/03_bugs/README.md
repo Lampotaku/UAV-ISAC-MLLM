@@ -26,6 +26,7 @@ last_updated: 2026-06-26
 | 4 | 服务器运行时错误 (Blackwell 8 连击) | P0 | sft | [server_runtime_errors.md](resolved/server_runtime_errors.md) |
 | 5 | 训练代码 Bug (scheduler/zero_grad/LR) | P0 | sft | [training_code_bugs.md](resolved/training_code_bugs.md) |
 | 6 | OOM 1-5 (HF wrapper→CE→CheckpointError) | P0 | sft | [oom_1_through_5.md](resolved/oom_1_through_5.md) |
+| 7 | TensorBoard 日志静默丢失 (缺失 init_trackers) | P1 | sft | [tensorboard_init_trackers.md](resolved/tensorboard_init_trackers.md) |
 
 **全部 P0/P1 bug 已解决。**
 
