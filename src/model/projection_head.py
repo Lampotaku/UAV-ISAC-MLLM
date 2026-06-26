@@ -70,6 +70,11 @@ class ControlReadout(nn.Module):
     控制 Token 读出 (公式 21)
 
     Z_c (control token hidden states) → δ̃ (raw continuous prior)
+
+    使用可学习 query attention pooling 替代 mean pooling:
+      - 允许每个 control token 专门化不同子任务 (position / layout / power)
+      - query 动态聚焦最相关的 token，避免 mean 抹平空间结构
+      - 初始化 query ~ N(0, 0.02) → 初始注意力接近均匀，等价于 mean 起点
     """
 
     def __init__(self, hidden_dim: int, num_control_tokens: int, out_dim: int):
@@ -77,7 +82,11 @@ class ControlReadout(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_tokens = num_control_tokens
 
-        # 对控制 token 取 mean pooling → 然后投影到 out_dim
+        # 可学习 attention query — 让模型决定从哪些 control token 读取
+        self.attn_query = nn.Parameter(torch.zeros(1, 1, hidden_dim))
+        nn.init.normal_(self.attn_query, std=0.02)
+
+        # 注意力池化后投影到 out_dim
         self.readout = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.GELU(),
@@ -94,8 +103,17 @@ class ControlReadout(nn.Module):
         Returns:
             raw_prior: (batch, out_dim)  连续的原始 prior
         """
-        # 池化控制 token
-        pooled = control_states.mean(dim=1)  # (B, hidden_dim)
+        B = control_states.shape[0]
+
+        # query attention pooling: query (B,1,hidden) × keys^T (B,hidden,N) → (B,1,N)
+        query = self.attn_query.expand(B, -1, -1)                    # (B, 1, hidden_dim)
+        scale = self.hidden_dim ** 0.5
+        attn_scores = torch.bmm(query, control_states.transpose(1, 2)) / scale  # (B, 1, N)
+        attn_weights = F.softmax(attn_scores, dim=-1)                # (B, 1, N)
+
+        # 加权聚合: weights (B,1,N) × values (B,N,hidden) → (B, hidden_dim)
+        pooled = torch.bmm(attn_weights, control_states).squeeze(1)  # (B, hidden_dim)
+
         return self.readout(pooled)
 
 

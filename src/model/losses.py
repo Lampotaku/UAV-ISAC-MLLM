@@ -187,6 +187,32 @@ class UAVISACLosses:
         )
         return loss
 
+    def compute_phase1_total(
+        self,
+        delta_hat: Dict[str, torch.Tensor],
+        delta_target: Dict[str, torch.Tensor],
+        phase1_lambda_ctl: Optional[float] = None,
+    ) -> Tuple[torch.Tensor, Dict[str, float]]:
+        """
+        Phase 1 CTL-only 损失: L = λ_ctl * L_ctl
+
+        关闭 CE，强制 LoRA 学会将环境信息编码到 control token hidden states。
+        用于 Phase 1 → Phase 2 分阶段训练。
+
+        Returns:
+            total_loss, metrics_dict
+        """
+        lambda_ctl = phase1_lambda_ctl if phase1_lambda_ctl is not None else self.lambda_ctl
+        loss_ctl = self.compute_control_loss(delta_hat, delta_target)
+        total = lambda_ctl * loss_ctl
+
+        metrics = {
+            "loss_ctl": loss_ctl.item(),
+            "loss_total": total.item(),
+            "phase": "phase1",
+        }
+        return total, metrics
+
     def compute_stage1_total(
         self,
         delta_hat: Dict[str, torch.Tensor],

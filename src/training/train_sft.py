@@ -92,6 +92,40 @@ from src.data.dataset import SFTDataset
 
 
 # ================================================================
+# Phase 1 Sensitivity Check
+# ================================================================
+
+def _check_perturbation_sensitivity(model, prompt: str, q_current: torch.Tensor) -> float:
+    """
+    检查 ±10m 扰动是否改变 delta_q 预测。
+
+    返回 L2 ratio: ||Δ_q(q_shifted) - Δ_q(q_baseline)|| / ||Δ_q(q_baseline)||
+    如果模型学到了连续空间结构，这个比值应该 > 0.1。
+    接近 0 意味着模型只对 "UAV 存在/不存在" 响应，未编码连续几何信息。
+
+    用于 Phase 1 → Phase 2 自动切换条件。
+    """
+    was_training = model.training
+    model.eval()
+
+    with torch.no_grad():
+        ws1 = model.generate_warmstart(prompt, q_current=q_current.clone())
+
+        q_shifted = q_current.clone()
+        q_shifted[:, :2] += torch.randn_like(q_shifted[:, :2]) * 10.0
+        ws2 = model.generate_warmstart(prompt, q_current=q_shifted)
+
+        d1 = ws1["delta_q"]
+        d2 = ws2["delta_q"]
+        ratio = (d2 - d1).norm().item() / (d1.norm().item() + 1e-8)
+
+    if was_training:
+        model.train()
+
+    return ratio
+
+
+# ================================================================
 # Training Loop
 # ================================================================
 
@@ -229,6 +263,141 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None):
     # 激活 TensorBoard 写入器 — 没有这行 accelerator.log() 全部静默丢弃！
     accelerator.init_trackers("stage1_sft")
 
+    # ---- Phase 1: CTL-only warmup (控制表示预训练) ----
+    # 完全关闭 CE loss，强制 LoRA 学会将环境信息编码到 control token hidden states。
+    # 每隔 N 步检查 perturbation sensitivity — 达标后自动切换到 Phase 2。
+    phase1_cfg = train_cfg.get("phase1", {})
+    phase1_enabled = phase1_cfg.get("enabled", False)
+    phase1_sensitivity = None
+
+    if phase1_enabled:
+        phase1_max_steps = phase1_cfg.get("max_steps", 400)
+        phase1_check_interval = phase1_cfg.get("sensitivity_check_steps", 50)
+        phase1_threshold = phase1_cfg.get("sensitivity_threshold", 0.1)
+        phase1_lambda_ctl = phase1_cfg.get("lambda_ctl", 1.0)
+
+        logger.info("=" * 60)
+        logger.info(
+            f"Phase 1: CTL-only warmup — max {phase1_max_steps} steps, "
+            f"sensitivity check every {phase1_check_interval} steps, "
+            f"threshold = {phase1_threshold}"
+        )
+        logger.info("=" * 60)
+
+        # 生成固定的 sensitivity 测试样本 (seed=42, 保证可复现)
+        from src.env import ISACScenarioGenerator
+        from src.data.prompt_builder import build_full_prompt
+
+        _sens_gen = ISACScenarioGenerator(
+            num_uavs=sim_cfg["num_uavs"],
+            num_users=sim_cfg["num_users"],
+            num_targets=sim_cfg["num_targets"],
+            area_size=tuple(sim_cfg["area_size"]),
+            carrier_freq_ghz=sim_cfg["carrier_freq_ghz"],
+            bandwidth_mhz=sim_cfg["bandwidth_mhz"],
+            num_antennas=sim_cfg["num_antennas_tx"],
+            p_max_dbm=sim_cfg["p_max_dbm"],
+            seed=42,
+        )
+        _sens_env = _sens_gen.sample(42)
+        _sens_prompt = build_full_prompt(_sens_env, sim_cfg)
+        _sens_q = torch.tensor(_sens_env.q_current, dtype=torch.float32, device="cuda")
+
+        phase1_step = 0
+        model.train()
+        phase1_pbar = tqdm(total=phase1_max_steps, desc="Phase 1 (CTL-only)")
+        phase1_iter = iter(dataloader)
+
+        while phase1_step < phase1_max_steps:
+            # 数据耗尽时重新 shuffle
+            try:
+                batch = next(phase1_iter)
+            except StopIteration:
+                phase1_iter = iter(dataloader)
+                batch = next(phase1_iter)
+
+            with accelerator.accumulate(model):
+                # 前向传播 (logits 也在计算，但 Phase 1 不使用)
+                outputs = model(
+                    input_ids=batch["input_ids"],
+                    attention_mask=batch["attention_mask"],
+                    control_mask=batch["control_mask"],
+                    q_current=batch["q_current"] if batch["q_current"].numel() > 0 else None,
+                    labels=batch["labels"],
+                )
+
+                delta_target = {
+                    "delta_q": batch["delta_q_target"],
+                    "delta_a": batch["delta_a_target"],
+                    "delta_p": batch["delta_p_target"],
+                }
+                delta_hat = {
+                    "delta_q": outputs["delta_q"],
+                    "delta_a": outputs["delta_a"],
+                    "delta_p": outputs["delta_p"],
+                }
+
+                total_loss, metrics = loss_fn.compute_phase1_total(
+                    delta_hat=delta_hat,
+                    delta_target=delta_target,
+                    phase1_lambda_ctl=phase1_lambda_ctl,
+                )
+
+                accelerator.backward(total_loss)
+
+            if accelerator.sync_gradients:
+                phase1_step += 1
+                phase1_pbar.update(1)
+
+                accelerator.clip_grad_norm_(
+                    model.parameters(),
+                    cfg["hardware"]["max_grad_norm"],
+                )
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
+
+                # 定期检查 perturbation sensitivity
+                if phase1_step % phase1_check_interval == 0:
+                    _raw_model = accelerator.unwrap_model(model)
+                    phase1_sensitivity = _check_perturbation_sensitivity(
+                        _raw_model, _sens_prompt, _sens_q
+                    )
+                    phase1_pbar.set_postfix({
+                        "loss_ctl": f"{metrics['loss_ctl']:.2f}",
+                        "sens": f"{phase1_sensitivity:.4f}",
+                    })
+                    accelerator.log({
+                        "phase1/loss_ctl": metrics["loss_ctl"],
+                        "phase1/sensitivity": phase1_sensitivity,
+                    }, step=phase1_step)
+
+                    if phase1_sensitivity > phase1_threshold:
+                        logger.info(
+                            f"Phase 1 complete at step {phase1_step}: "
+                            f"sensitivity {phase1_sensitivity:.4f} > threshold {phase1_threshold}"
+                        )
+                        break
+
+                # 每 50 步记录一次 (即使未到 check_interval)
+                if phase1_step % 50 == 0 and phase1_step % phase1_check_interval != 0:
+                    accelerator.log({"phase1/loss_ctl": metrics["loss_ctl"]}, step=phase1_step)
+
+        phase1_pbar.close()
+
+        if phase1_step >= phase1_max_steps:
+            logger.warning(
+                f"Phase 1 reached max_steps {phase1_max_steps} without hitting "
+                f"sensitivity threshold {phase1_threshold}. "
+                f"Final sensitivity: {phase1_sensitivity}. Proceeding to Phase 2 anyway."
+            )
+        else:
+            logger.info(
+                f"Phase 1 auto-switch to Phase 2 at step {phase1_step}, "
+                f"sensitivity={phase1_sensitivity:.4f}"
+            )
+
+    # ---- Phase 2 / Main: Joint SFT + CTL ----
     global_step = 0
     model.train()
 
