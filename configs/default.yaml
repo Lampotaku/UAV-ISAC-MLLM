@@ -36,7 +36,7 @@ training:
     # 用 perturbation sensitivity 作为自动切换指标。
     phase1:
       enabled: true                     # 启用 Phase 1
-      lr_lora: 5.0e-4                   # Phase 1 LoRA LR (纯 regression, 保守起步防 shortcut)
+      lr_lora: 1.0e-3                   # Phase 1 LoRA LR (5e-4 挤牙膏, 拉满)
       lambda_ctl: 1.0                   # Phase 1 控制 loss 权重 (Phase 2 用 model.loss.lambda_ctl=0.5)
       sensitivity_check_steps: 50       # 每 N 步检查 perturbation sensitivity
       sensitivity_threshold: 0.1        # 跨环境 delta_q L2 ratio > 0.1 → 切换 Phase 2
