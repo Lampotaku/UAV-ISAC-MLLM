@@ -13,6 +13,17 @@
     --n_samples 5
 """
 
+# ⚠️ 必须在 import numpy / torch 之前！
+# 防止 Intel MKL / OpenBLAS 与 PyTorch DataLoader 多进程打架
+import os as _os
+_os.environ["OMP_NUM_THREADS"] = "1"
+_os.environ["OPENBLAS_NUM_THREADS"] = "1"
+_os.environ["MKL_NUM_THREADS"] = "1"
+_os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+_os.environ["NUMEXPR_NUM_THREADS"] = "1"
+_os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+del _os
+
 import os
 import sys
 import json
@@ -70,7 +81,7 @@ def load_model(checkpoint_path: str, config_path: str) -> Gemma3ISAC:
     return model, cfg
 
 
-def generate_text(model: Gemma3ISAC, prompt: str, max_new_tokens: int = 512) -> str:
+def generate_text(model: Gemma3ISAC, prompt: str, max_new_tokens: int = 256) -> str:
     """自回归文本生成 — 检查语言质量"""
     device = next(model.base_model.parameters()).device
 
@@ -80,11 +91,20 @@ def generate_text(model: Gemma3ISAC, prompt: str, max_new_tokens: int = 512) -> 
     input_ids = inputs["input_ids"].to(device)
     attention_mask = inputs["attention_mask"].to(device)
 
+    print(f"  Prompt tokens: {input_ids.shape[1]}, device: {device}")
+
     # 追加 control tokens (训练时学到的模式: prompt + <ctrl_0>...<ctrl_7> + JSON)
     ctrl_ids = torch.tensor([model.control_token_ids], device=device)
     input_ids = torch.cat([input_ids, ctrl_ids], dim=1)
     attention_mask = torch.cat([attention_mask, torch.ones_like(ctrl_ids)], dim=1)
 
+    # Gemma tokenizer 默认没有 pad_token — 用 eos_token 兜底
+    pad_id = model.tokenizer.pad_token_id
+    if pad_id is None:
+        pad_id = model.tokenizer.eos_token_id
+    eos_id = model.tokenizer.eos_token_id
+
+    print(f"  Generating (max {max_new_tokens} tokens)...", end=" ", flush=True)
     with torch.no_grad():
         output_ids = model.base_model.generate(
             input_ids=input_ids,
@@ -93,9 +113,10 @@ def generate_text(model: Gemma3ISAC, prompt: str, max_new_tokens: int = 512) -> 
             temperature=0.7,
             do_sample=True,
             top_p=0.95,
-            pad_token_id=model.tokenizer.pad_token_id,
-            eos_token_id=model.tokenizer.eos_token_id,
+            pad_token_id=pad_id,
+            eos_token_id=eos_id,
         )
+    print(f"done ({output_ids.shape[1]} total tokens)")
 
     # 只取新生成的部分
     generated_ids = output_ids[0][input_ids.shape[1]:]
