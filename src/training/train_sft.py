@@ -309,6 +309,11 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None):
         _sens_prompt_b = build_full_prompt(_sens_env_b, sim_cfg)
         _sens_q_b = torch.tensor(_sens_env_b.q_current, dtype=torch.float32, device="cuda")
 
+        # Phase 1 使用更高 LoRA LR (纯 regression, 无 CE 噪声, 允许激进更新)
+        phase1_lr_lora = phase1_cfg.get("lr_lora", 1e-3)
+        optimizer.param_groups[1]["lr"] = phase1_lr_lora
+        logger.info(f"Phase 1 LoRA LR: {phase1_lr_lora} (Phase 2 will use {base_lr})")
+
         phase1_step = 0
         model.train()
         phase1_pbar = tqdm(total=phase1_max_steps, desc="Phase 1 (CTL-only)")
@@ -404,6 +409,10 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None):
             )
 
     # ---- Phase 2 / Main: Joint SFT + CTL ----
+    # 恢复 Phase 2 LoRA LR
+    optimizer.param_groups[1]["lr"] = base_lr
+    logger.info(f"Phase 2 LoRA LR restored to {base_lr}")
+
     global_step = 0
     model.train()
 
