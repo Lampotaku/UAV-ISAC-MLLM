@@ -392,6 +392,25 @@ def run_overfit_test(config_path: str, data_path: str, n_samples: int,
                 if param.requires_grad:
                     weight_snapshot[name] = param.data.clone()
 
+        # ── Step 5 诊断: lora_A 梯度是否已出现 (B 不再是零) ──
+        # 必须在 clip/step/zero_grad 之前检查, 否则梯度已被清零
+        if step == 5:
+            lora_a_grad_count = 0
+            lora_a_zero_count = 0
+            for name, param in model.named_parameters():
+                if "lora_A" in name and param.requires_grad and param.grad is not None:
+                    if param.grad.norm().item() > 0:
+                        lora_a_grad_count += 1
+                    else:
+                        lora_a_zero_count += 1
+            print(f"\n  [DIAG] === Step 5 lora_A gradient check ===")
+            print(f"  lora_A with gradient: {lora_a_grad_count}")
+            print(f"  lora_A still zero:    {lora_a_zero_count}")
+            if lora_a_grad_count > 0:
+                ok(f"lora_A gradients emerging (B no longer zero → A now receives gradients)")
+            else:
+                fail(f"lora_A STILL zero at step 5 — something deeper is broken!")
+
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
 
@@ -417,24 +436,6 @@ def run_overfit_test(config_path: str, data_path: str, n_samples: int,
             first_step_diagnostics_done = True
 
         optimizer.zero_grad()
-
-        # ── Step 5 诊断: lora_A 梯度是否已出现 (B 不再是零) ──
-        if step == 5:
-            lora_a_grad_count = 0
-            lora_a_zero_count = 0
-            for name, param in model.named_parameters():
-                if "lora_A" in name and param.requires_grad and param.grad is not None:
-                    if param.grad.norm().item() > 0:
-                        lora_a_grad_count += 1
-                    else:
-                        lora_a_zero_count += 1
-            print(f"\n  [DIAG] === Step 5 lora_A gradient check ===")
-            print(f"  lora_A with gradient: {lora_a_grad_count}")
-            print(f"  lora_A still zero:    {lora_a_zero_count}")
-            if lora_a_grad_count > 0:
-                ok(f"lora_A gradients emerging (B no longer zero → A now receives gradients)")
-            else:
-                fail(f"lora_A STILL zero at step 5 — something deeper is broken!")
 
         # 记录 (防御性: 剥离可能的计算图, 尽管 compute_stage1_total 已调 .item())
         for k in history:
