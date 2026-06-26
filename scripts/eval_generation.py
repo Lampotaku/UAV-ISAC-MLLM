@@ -77,6 +77,8 @@ def load_model(checkpoint_path: str, config_path: str) -> Gemma3ISAC:
             "sinkhorn_iters": model_cfg["projection_head"]["sinkhorn_iters"],
         },
     )
+    # from_pretrained 默认在 CPU, 显式移到 GPU
+    model = model.to("cuda")
     model.eval()
     return model, cfg
 
