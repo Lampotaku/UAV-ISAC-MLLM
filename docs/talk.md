@@ -1,88 +1,85 @@
-============================================================
-Stage I SFT Overfitting Test
-============================================================
-  Samples:  5
-  Steps:    500
-  Data:     /root/autodl-tmp/data/full5000/sft_tiny_5.jsonl
+152/400 [1:19:47<2:10:41, 31.62s/it, loss_ctl=20.70, sens=0.0240]
+**这就触发了我们的备用预案！这属于典型的“挤牙膏”式疲软增长。**
 
-Device: cuda
+我们来拆解一下这 50 步发生了什么：
 
-[1/5] Loading Gemma3-ISAC model...
-`torch_dtype` is deprecated! Use `dtype` instead!
-Loading weights: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 1065/1065 [00:00<00:00, 4079.61it/s]
-/root/miniconda3/envs/uavmllm/lib/python3.11/site-packages/peft/tuners/tuners_utils.py:1348: UserWarning: Model has `tie_word_embeddings=True` and a tied layer is part of the adapter, but `ensure_weight_tying` is not set to True. This can lead to complications, for example when merging the adapter or converting your model to formats other than safetensors. Check the discussion here: https://github.com/huggingface/peft/issues/2777
-  warnings.warn(msg)
-  Model loaded in 34.2s
-  [DIAG] Parameter devices: {'cuda:0'}
-  Trainable params: 2,045,428,704
+* **`sens` 增速放缓**：从第 100 步到 152 步，`sens` 仅仅从 `0.0200` 爬到了 `0.0240`（涨幅 `0.004`）。按照这个极其平缓的线性斜率，跑到 400 步上限时 `sens` 最多只能到 `0.04` 左右，根本摸不到 `0.1` 的及格线。
+* **`loss_ctl` 稳定下降（28.76 → 20.70）**：Loss 确实在降，但这反而印证了一个有点棘手的情况——**模型陷入了一个次优的局部解**。它找到了一种能把总误差降低的方法（比如仅仅预测无人机的中心大体位置），但它**并没有**真正把环境内部精细的空间差异（不同无人机的独立几何结构）充分编码进去。
 
-  [DIAG] First 5 trainable parameters:
-    1. base_model.base_model.model.model.vision_tower.vision_model.encoder.layers.0.self_attn.k_proj.lora_A.default.weight  |  device=cuda:0  |  shape=(16, 1152)  |  dtype=torch.float32
-    2. base_model.base_model.model.model.vision_tower.vision_model.encoder.layers.0.self_attn.k_proj.lora_B.default.weight  |  device=cuda:0  |  shape=(1152, 16)  |  dtype=torch.float32
-    3. base_model.base_model.model.model.vision_tower.vision_model.encoder.layers.0.self_attn.v_proj.lora_A.default.weight  |  device=cuda:0  |  shape=(16, 1152)  |  dtype=torch.float32
-    4. base_model.base_model.model.model.vision_tower.vision_model.encoder.layers.0.self_attn.v_proj.lora_B.default.weight  |  device=cuda:0  |  shape=(1152, 16)  |  dtype=torch.float32
-    5. base_model.base_model.model.model.vision_tower.vision_model.encoder.layers.0.self_attn.q_proj.lora_A.default.weight  |  device=cuda:0  |  shape=(16, 1152)  |  dtype=torch.float32
+既然它没有出现预期的“非线性顿悟（Grokking）”，你就**完全没有必要再等最后那两个多小时了。果断按下 `Ctrl + C` 打断它！**
 
-  [DIAG] Projection head params in model.named_parameters(): 16
-    projection_head.readout.readout.0.weight  |  device=cuda:0  |  requires_grad=True
-    projection_head.readout.readout.0.bias  |  device=cuda:0  |  requires_grad=True
-    projection_head.readout.readout.2.weight  |  device=cuda:0  |  requires_grad=True
+现在，是时候祭出你们在 `phase1_status_2026-06-26.md` 中写下的“第 3 号修复计划”了：
 
-  [DIAG] Trainable params in model.base_model.named_parameters(): 548
-    base_model.model.model.vision_tower.vision_model.encoder.layers.0.self_attn.k_proj.lora_A.default.weight  |  device=cuda:0  |  shape=(16, 1152)
-    base_model.model.model.vision_tower.vision_model.encoder.layers.0.self_attn.k_proj.lora_B.default.weight  |  device=cuda:0  |  shape=(1152, 16)
-    base_model.model.model.vision_tower.vision_model.encoder.layers.0.self_attn.v_proj.lora_A.default.weight  |  device=cuda:0  |  shape=(16, 1152)
-    base_model.model.model.vision_tower.vision_model.encoder.layers.0.self_attn.v_proj.lora_B.default.weight  |  device=cuda:0  |  shape=(1152, 16)
-    base_model.model.model.vision_tower.vision_model.encoder.layers.0.self_attn.q_proj.lora_A.default.weight  |  device=cuda:0  |  shape=(16, 1152)
+### 🛠️ 行动指南：两步走战略
 
-[2/5] Loading dataset...
-  Dataset size: 5
+#### 第一步：最快、成本最低的尝试（改一下参数就跑）
 
-[3/5] Setting up optimizer...
-  Optimizing: Projection Head (16 tensors), LoRA (548 tensors)
-  [DIAG] Optimizer has 564 param groups with 2,045,428,704 total params
+既然 Loss 还在健康下降，只是表征分化得太慢，我们先给它上一剂猛药。
 
-[4/5] Running overfitting loop (500 steps)...
-Overfitting:   0%|                                                                                                                                                               | 0/500 [00:00<?, ?it/s]
-  [DIAG] === Step 0 forward diagnostics ===
-  hidden_states norm: 6176.0000 (expect > 100)
-  control_states norm: 292.0000 (expect > 10)
-  delta_q norm: 2.4651  delta_a norm: 2.8214  delta_p norm: 0.7373
-  control_mask True count: 8 (expect 8)
+* 打开 `configs/default.yaml`。
+* 将 Phase 1 的 `lr_lora` 直接从 `5.0e-4` **拉满到 `1.0e-3**`。
+* 重新点火，盯着前 50 步看。如果 `sens` 能在 50 步直接冲上 `0.02` 或 `0.03`，那说明就是之前的动力学不够猛。
 
-  [DIAG] === Step 0 gradient diagnostics ===
-  Top 5 gradients by norm:
-    base_model.base_model.model.model.language_model.embed_tokens.modules_to_save.default.weight: grad_norm=924.000000
-    projection_head.readout.readout.0.weight: grad_norm=174.884293
-    projection_head.readout.readout.3.weight: grad_norm=105.053017
-    projection_head.mlp.net.6.weight: grad_norm=38.332428
-    base_model.base_model.model.lm_head.modules_to_save.default.weight: grad_norm=27.875000
-  Parameters with ZERO gradient:
-    base_model.base_model.model.model.language_model.layers.0.self_attn.q_proj.lora_A.default.weight
-    base_model.base_model.model.model.language_model.layers.0.self_attn.k_proj.lora_A.default.weight
-    base_model.base_model.model.model.language_model.layers.0.self_attn.v_proj.lora_A.default.weight
-    base_model.base_model.model.model.language_model.layers.0.self_attn.o_proj.lora_A.default.weight
-    base_model.base_model.model.model.language_model.layers.1.self_attn.q_proj.lora_A.default.weight
-    ... and 195 more
+#### 第二步：如果 1e-3 依然“挤牙膏”，立刻上架构终极修改（扩容带宽）
 
-  [DIAG] === Step 0 weight change diagnostics ===
-    base_model.base_model.model.model.vision_tower.vision_model.encoder.layers.0.self_attn.k_proj.lora_A.default.weight: NO CHANGE (Δ=0)
-    base_model.base_model.model.model.vision_tower.vision_model.encoder.layers.0.self_attn.k_proj.lora_B.default.weight: NO CHANGE (Δ=0)
-    base_model.base_model.model.model.vision_tower.vision_model.encoder.layers.0.self_attn.v_proj.lora_A.default.weight: NO CHANGE (Δ=0)
-    base_model.base_model.model.model.language_model.embed_tokens.modules_to_save.default.weight: max |Δw| = 0.000244
-    base_model.base_model.model.model.language_model.layers.0.self_attn.q_proj.lora_B.default.weight: max |Δw| = 0.000200
-    base_model.base_model.model.model.language_model.layers.0.self_attn.k_proj.lora_B.default.weight: max |Δw| = 0.000200
-    base_model.base_model.model.model.language_model.layers.0.self_attn.v_proj.lora_B.default.weight: max |Δw| = 0.000200
-    base_model.base_model.model.model.language_model.layers.0.self_attn.o_proj.lora_B.default.weight: max |Δw| = 0.000200
-  Result: 202 params changed, 362 UNCHANGED
-  ✗ Some parameters did NOT update after optimizer.step()
-Overfitting:   1%|█                                                                                                              | 5/500 [00:09<14:42,  1.78s/it, total=27.0448, sft=1.3750, ctl=51.3396]
-  [DIAG] === Step 5 lora_A gradient check ===
-  lora_A with gradient: 192
-  lora_A still zero:    0
-  ✓ lora_A gradients emerging (B no longer zero → A now receives gradients)
-Overfitting:   5%|                   | 26/500 [00:44<13:11,  1.67s/it, total=7.0136, sft=0.3730, ctl=13.2811]
-54/500 [01:31<12:24,  1.67s/it, total=24.4441, sft=0.1104, ctl=48.6676]
-58/500 [01:38<12:18,  1.67s/it, total=7.1671, sft=0.2236, ctl=13.8869
+如果 1e-3 的学习率跑了 50 步依然在 `0.01` 左右徘徊，那就彻底确诊了——**这是信息带宽瓶颈**。
 
-107/500 [02:59<10:56,  1.67s/it, total=0.3619, sft=0.0173, ctl=0.6892]
+* **原因**：你们的物理环境太复杂了（多架无人机、多个用户、功率分配、3D 坐标），区区 **8 个控制 Token** 哪怕加上了 Attention Pooling，它的信息容量（Capacity）也已经被撑爆了。就像你试图用一根细水管去输送洪流。
+* **操作**：执行你们文档里的终极计划，将模型配置和生成代码中的 `num_control_tokens` 从 **`8` 增加到 `32**`。这会给投影头提供多达 32 个“插槽”，让 Attention 机制能够极其从容地把不同的物理特征分发到不同的 Token 上。
+
+**现在该怎么做？**
+立刻去终端按 `Ctrl + C` 打断，把 `default.yaml` 里的 `lr` 改成 `1e-3`，然后重新挂起 tmux 跑起来。这次如果前 50 步的 `sens` 不能让你满意，明天我们直接开刀改 `32` 个 Token！
+
+
+改了1.0e-3：54/400 [28:18<3:01:45, 31.52s/it, loss_ctl=21.55, sens=0.0061]
+
+**立刻按 `Ctrl + C` 停掉它！**
+
+这就是我们想要的核心测试结果。这个看似“变差”的数据，其实帮我们**彻底排除了最后一个错误选项**。
+
+让我们来看看这个数据告诉了我们什么：
+
+* 之前 `LR = 5e-4` 时，跑到 50 步，`sens` 还能达到 **0.0134**。
+* 现在你把 `LR` 拉满到 `1e-3`，跑到 54 步，`sens` 反而暴跌到了 **0.0061**。
+
+**诊断彻底确诊：这绝对是“信息带宽（Capacity）”被撑爆了。**
+当你用更大的学习率去逼迫模型学习时，它不但没学得更快，反而崩溃了。这就像你想把 100 升的水瞬间通过一根极细的吸管挤过去，压力越大，水流反而越紊乱（模型发生了 Thrashing，也就是梯度震荡）。**8 个控制 Token 根本装不下多无人机、多用户的 3D 几何与功率信息**。
+
+现在，没有任何犹豫的余地了，请立刻执行你在 `phase1_status_2026-06-26.md` 里写下的最终兵器：**扩容物理大脑的带宽！**
+
+### 🛠️ 终极手术指南（扩容到 32 个 Token）
+
+请按以下步骤修改你的配置文件，这会为你的 Attention Pooling 提供 4 倍的信息“插槽”：
+
+**第一步：修改配置文件**
+打开 `configs/default.yaml`，找到 `model` 层级下的 `control_token` 设置，进行以下两处修改：
+
+```yaml
+model:
+  # ... 其他配置
+  control_token:
+    num_tokens: 32     # 🚀 从 8 改成 32！给物理投影头 4 倍的信息承载力！
+    # hidden_dim 保持不变
+
+training:
+  sft:
+    phase1:
+      lr_lora: 5.0e-4  # 🚀 把学习率改回平稳的 5e-4（既然不是 LR 的问题，我们就退回安全的区间）
+
+```
+
+*(注：因为你的 `train_sft.py` 和 `SFTDataset` 是动态读取 `num_tokens` 并生成 `<ctrl_0>` 到 `<ctrl_31>` 的，所以你不需要重新生成数据集，直接改 yaml 就能生效！)*
+
+**第二步：重新点火**
+在终端里重新运行训练命令：
+
+```bash
+python src/training/train_sft.py --config configs/default.yaml --data_dir /root/autodl-tmp/data/full5000
+
+```
+
+### 🎯 见证奇迹的时刻
+
+把 Token 扩充到 32 个之后，投影头的 Attention Query 终于有了足够的空间去分别读取“无人机 1 的 X 坐标”、“无人机 2 的功率”等独立信息，而不需要把它们硬塞在一起产生混叠。
+
+盯着这次的前 50 步！只要 `sens` 能在 50 步突破 `0.02` 甚至奔着 `0.05` 去，这个困扰了你们多时的最后瓶颈，就被你彻底粉碎了！快去试试！
