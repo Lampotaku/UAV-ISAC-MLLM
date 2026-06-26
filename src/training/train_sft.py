@@ -226,6 +226,9 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None):
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(checkpoint_dir, exist_ok=True)
 
+    # 激活 TensorBoard 写入器 — 没有这行 accelerator.log() 全部静默丢弃！
+    accelerator.init_trackers("stage1_sft")
+
     global_step = 0
     model.train()
 

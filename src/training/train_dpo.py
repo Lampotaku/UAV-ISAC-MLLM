@@ -302,6 +302,9 @@ def train_stage2(
     checkpoint_dir = output_cfg.get("checkpoint_dir", "./checkpoints")
     os.makedirs(checkpoint_dir, exist_ok=True)
 
+    # 激活 TensorBoard 写入器 — 没有这行 accelerator.log() 全部静默丢弃！
+    accelerator.init_trackers("stage2_dpo")
+
     global_step = 0
     model.train()
 

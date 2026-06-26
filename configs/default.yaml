@@ -29,7 +29,7 @@ training:
     weight_decay: 0.01
     max_seq_length: 3456             # 128-aligned, 包容最大样本 3329 + 8 ctrl tokens, 砍 4096→3456 省 ~40% 注意力计算
     save_steps: 200
-    logging_steps: 10
+    logging_steps: 5
 
   # Stage II: DPO
   dpo:
