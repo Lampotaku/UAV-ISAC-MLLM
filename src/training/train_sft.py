@@ -95,29 +95,30 @@ from src.data.dataset import SFTDataset
 # Phase 1 Sensitivity Check
 # ================================================================
 
-def _check_perturbation_sensitivity(model, prompt: str, q_current: torch.Tensor) -> float:
+def _check_cross_env_sensitivity(
+    model,
+    prompt_a: str, q_a: torch.Tensor,
+    prompt_b: str, q_b: torch.Tensor,
+) -> float:
     """
-    检查 ±10m 扰动是否改变 delta_q 预测。
+    跨环境 sensitivity: 两个不同 UAV 位置的环境，模型输出是否不同。
 
-    返回 L2 ratio: ||Δ_q(q_shifted) - Δ_q(q_baseline)|| / ||Δ_q(q_baseline)||
-    如果模型学到了连续空间结构，这个比值应该 > 0.1。
-    接近 0 意味着模型只对 "UAV 存在/不存在" 响应，未编码连续几何信息。
+    返回 L2 ratio: ||Δ_q(env_b) - Δ_q(env_a)|| / ||Δ_q(env_a)||
+    > 0.1 → 模型学到了环境特定的控制表示，可切换 Phase 2。
+    ≈ 0  → 模型对所有环境输出相同 delta，尚未学到几何编码。
 
-    用于 Phase 1 → Phase 2 自动切换条件。
+    两个 env 使用固定的确定性 seed (42 和 43)，保证每次检查可复现。
     """
     was_training = model.training
     model.eval()
 
     with torch.no_grad():
-        ws1 = model.generate_warmstart(prompt, q_current=q_current.clone())
+        ws_a = model.generate_warmstart(prompt_a, q_current=q_a)
+        ws_b = model.generate_warmstart(prompt_b, q_current=q_b)
 
-        q_shifted = q_current.clone()
-        q_shifted[:, :2] += torch.randn_like(q_shifted[:, :2]) * 10.0
-        ws2 = model.generate_warmstart(prompt, q_current=q_shifted)
-
-        d1 = ws1["delta_q"]
-        d2 = ws2["delta_q"]
-        ratio = (d2 - d1).norm().item() / (d1.norm().item() + 1e-8)
+        d_a = ws_a["delta_q"]
+        d_b = ws_b["delta_q"]
+        ratio = (d_b - d_a).norm().item() / (d_a.norm().item() + 1e-8)
 
     if was_training:
         model.train()
@@ -284,7 +285,8 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None):
         )
         logger.info("=" * 60)
 
-        # 生成固定的 sensitivity 测试样本 (seed=42, 保证可复现)
+        # 生成两个固定的 sensitivity 测试环境 (seed=42/43, 可复现)
+        # 用不同 seed 得到不同 UAV 位置，检查模型是否对不同环境输出不同 delta
         from src.env import ISACScenarioGenerator
         from src.data.prompt_builder import build_full_prompt
 
@@ -299,9 +301,13 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None):
             p_max_dbm=sim_cfg["p_max_dbm"],
             seed=42,
         )
-        _sens_env = _sens_gen.sample(42)
-        _sens_prompt = build_full_prompt(_sens_env, sim_cfg)
-        _sens_q = torch.tensor(_sens_env.q_current, dtype=torch.float32, device="cuda")
+        _sens_env_a = _sens_gen.sample(42)
+        _sens_prompt_a = build_full_prompt(_sens_env_a, sim_cfg)
+        _sens_q_a = torch.tensor(_sens_env_a.q_current, dtype=torch.float32, device="cuda")
+
+        _sens_env_b = _sens_gen.sample(43)
+        _sens_prompt_b = build_full_prompt(_sens_env_b, sim_cfg)
+        _sens_q_b = torch.tensor(_sens_env_b.q_current, dtype=torch.float32, device="cuda")
 
         phase1_step = 0
         model.train()
@@ -360,8 +366,8 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None):
                 # 定期检查 perturbation sensitivity
                 if phase1_step % phase1_check_interval == 0:
                     _raw_model = accelerator.unwrap_model(model)
-                    phase1_sensitivity = _check_perturbation_sensitivity(
-                        _raw_model, _sens_prompt, _sens_q
+                    phase1_sensitivity = _check_cross_env_sensitivity(
+                        _raw_model, _sens_prompt_a, _sens_q_a, _sens_prompt_b, _sens_q_b
                     )
                     phase1_pbar.set_postfix({
                         "loss_ctl": f"{metrics['loss_ctl']:.2f}",
