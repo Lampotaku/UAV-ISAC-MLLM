@@ -126,16 +126,36 @@ def generate_text(model: Gemma3ISAC, prompt: str, max_new_tokens: int = 256) -> 
 
 
 def check_json_validity(text: str) -> dict:
-    """尝试解析生成的 JSON, 返回诊断信息"""
-    result = {"valid_json": False, "has_delta_q": False, "num_floats": 0, "error": None}
-    # 提取第一个 JSON 对象
-    brace_start = text.find("{")
-    brace_end = text.rfind("}") + 1
-    if brace_start == -1 or brace_end == 0:
+    """尝试解析生成的 JSON, 返回诊断信息
+
+    处理: markdown 代码块, 截断的 JSON (缺 }]), 空输出
+    """
+    result = {"valid_json": False, "has_delta_q": False, "has_delta_a": False,
+              "has_delta_p": False, "num_floats": 0, "truncated": False, "error": None}
+
+    # 1. 剥离 markdown 代码块 (```json ... ```)
+    stripped = text.strip()
+    # 移除开头的 ```json 或 ```
+    if stripped.startswith("```"):
+        first_newline = stripped.find("\n")
+        if first_newline != -1:
+            stripped = stripped[first_newline + 1:]
+    # 移除末尾的 ```
+    if stripped.rstrip().endswith("```"):
+        last_fence = stripped.rstrip().rfind("```")
+        stripped = stripped.rstrip()[:last_fence]
+
+    # 2. 查找 JSON 边界
+    brace_start = stripped.find("{")
+    brace_end = stripped.rfind("}")
+
+    if brace_start == -1:
         result["error"] = "No JSON braces found"
         return result
 
-    json_str = text[brace_start:brace_end]
+    json_str = stripped[brace_start:brace_end + 1 if brace_end != -1 else len(stripped)]
+
+    # 3. 尝试直接解析
     try:
         parsed = json.loads(json_str)
         result["valid_json"] = True
@@ -144,16 +164,55 @@ def check_json_validity(text: str) -> dict:
                 result[f"has_{key}"] = True
                 val = parsed[key]
                 if isinstance(val, list):
-                    # 递归 count floats
                     def count_floats(x):
                         if isinstance(x, (int, float)):
                             return 1
                         if isinstance(x, list):
                             return sum(count_floats(v) for v in x)
                         return 0
-                    result["num_floats"] = max(result["num_floats"], count_floats(val))
-    except json.JSONDecodeError as e:
-        result["error"] = str(e)
+                    result["num_floats"] += count_floats(val)
+        return result
+    except json.JSONDecodeError:
+        pass
+
+    # 4. 截断恢复: 从后往前找到第一个未闭合的 [, 补全缺失的 ] → }
+    # 典型截断: "...  [0.0, 0.0, 0.0],\n    [0.0, 1.0, " (缺 ] ] } } )
+    if brace_end == -1:
+        result["truncated"] = True
+        # 计算未闭合的括号
+        depth_sq = 0   # [
+        depth_br = 0   # {
+        for ch in json_str:
+            if ch == '[':
+                depth_sq += 1
+            elif ch == ']':
+                depth_sq -= 1
+            elif ch == '{':
+                depth_br += 1
+            elif ch == '}':
+                depth_br -= 1
+
+        repair = json_str.rstrip().rstrip(",")  # 去掉末尾逗号
+        repair += "]" * max(0, depth_sq)
+        repair += "}" * max(0, depth_br)
+        try:
+            parsed = json.loads(repair)
+            result["valid_json"] = True
+            for key in ["delta_q", "delta_a", "delta_p"]:
+                if key in parsed:
+                    result[f"has_{key}"] = True
+                    val = parsed[key]
+                    if isinstance(val, list):
+                        def count_floats(x):
+                            if isinstance(x, (int, float)):
+                                return 1
+                            if isinstance(x, list):
+                                return sum(count_floats(v) for v in x)
+                            return 0
+                        result["num_floats"] += count_floats(val)
+        except json.JSONDecodeError as e:
+            result["error"] = f"Repair failed: {e}"
+        return result
 
     return result
 
@@ -186,10 +245,10 @@ def run_generation_eval(model, cfg, n_samples: int = 5):
         print(f"Prompt length: {len(prompt)} chars")
 
         # 生成文本
-        generated = generate_text(model, prompt)
+        generated = generate_text(model, prompt, max_new_tokens=1024)
         print(f"\n[Generated Text] ({len(generated)} chars):")
-        print(generated[:800])
-        if len(generated) > 800:
+        print(generated[:1200])
+        if len(generated) > 1200:
             print(f"... (truncated, {len(generated)} total)")
 
         # JSON 检查
@@ -313,9 +372,9 @@ def run_generation_eval(model, cfg, n_samples: int = 5):
         }
 
         warm_start_dict = {
-            "delta_q": ws["delta_q"].numpy(),
-            "delta_a": ws["delta_a"].numpy(),
-            "delta_p": ws["delta_p"].numpy(),
+            "delta_q": ws["delta_q"].detach().numpy(),
+            "delta_a": ws["delta_a"].detach().numpy(),
+            "delta_p": ws["delta_p"].detach().numpy(),
         }
 
         # With warmstart
