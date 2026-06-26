@@ -164,7 +164,8 @@ class Gemma3ISAC(nn.Module):
                 modules_to_save=["embed_tokens", "lm_head"],
             )
             self.base_model = get_peft_model(self.base_model, peft_config)
-            self.base_model.gradient_checkpointing_enable()
+            # DEBUG: 暂时禁用 gradient checkpointing — 疑似导致 lora_A 梯度为 0
+            # self.base_model.gradient_checkpointing_enable()
 
         # ---- Projection Head ----
         if proj_head_config is None:
@@ -470,7 +471,8 @@ class Gemma3ISAC(nn.Module):
                 modules_to_save=["embed_tokens", "lm_head"],
             )
             base_model = get_peft_model(base_model, peft_config)
-            base_model.gradient_checkpointing_enable()
+            # DEBUG: 暂时禁用 gradient checkpointing — 疑似导致 lora_A 梯度为 0
+            # base_model.gradient_checkpointing_enable()
 
         # ---- 加载 Projection Head ----
         if proj_head_config is None:
