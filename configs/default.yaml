@@ -77,7 +77,7 @@ model:
 
   # Control Token
   control_token:
-    num_tokens: 32          # 控制 token 数量 (8→32: 信息带宽扩容, 8 已被 1e-3 反跌确诊为 bottleneck)
+    num_tokens: 8           # 控制 token 数量 (32→8: 单 query 瓶颈已修复为 Multi-Query, 无需多 token)
     hidden_dim: 3840        # Gemma 3 12B 的 hidden_size
 
   # Projection Head

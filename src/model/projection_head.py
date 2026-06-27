@@ -71,27 +71,36 @@ class ControlReadout(nn.Module):
 
     Z_c (control token hidden states) → δ̃ (raw continuous prior)
 
-    使用可学习 query attention pooling 替代 mean pooling:
-      - 允许每个 control token 专门化不同子任务 (position / layout / power)
-      - query 动态聚焦最相关的 token，避免 mean 抹平空间结构
-      - 初始化 query ~ N(0, 0.02) → 初始注意力接近均匀，等价于 mean 起点
+    Multi-Query Attention Pooling:
+      - M 个独立 query (每架 UAV 一个)，各自从 control token 中提取专属信息
+      - 单 query 方案被证伪: softmax 强制互斥，一个 query 无法同时关注 4 架无人机的独立状态
+      - 32-token 扩容也被证伪: 出口瓶子仍是单个 query 向量，梯度被 softmax 稀释 32×
+      - M 个 query 独立计算 attention，每个 UAV 有自己的"视角"
+      - 共享 readout MLP 作用于每个 UAV 的 pooled vector
+      - 初始化 query ~ N(0, 0.02) → 初始注意力接近均匀
     """
 
-    def __init__(self, hidden_dim: int, num_control_tokens: int, out_dim: int):
+    def __init__(self, hidden_dim: int, num_control_tokens: int, out_dim: int, num_queries: int = 4):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.num_tokens = num_control_tokens
+        self.num_queries = num_queries
 
-        # 可学习 attention query — 让模型决定从哪些 control token 读取
-        self.attn_query = nn.Parameter(torch.zeros(1, 1, hidden_dim))
-        nn.init.normal_(self.attn_query, std=0.02)
+        # M 个独立可学习 query — 每个 UAV 一个，各自关注不同 control token
+        self.attn_queries = nn.Parameter(torch.zeros(1, num_queries, hidden_dim))
+        nn.init.normal_(self.attn_queries, std=0.02)
 
-        # 注意力池化后投影到 out_dim
+        # 每个 query 输出的维度 = 总输出 / M
+        # total_out = M*3 (pos) + M*K (assoc) + M*(K+1) (power), 能被 M 整除
+        per_query_out = out_dim // num_queries
+        self.per_query_out = per_query_out
+
+        # 共享 readout: 对每个 UAV 的 pooled vector 独立作用
         self.readout = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.GELU(),
             nn.LayerNorm(hidden_dim // 2),
-            nn.Linear(hidden_dim // 2, out_dim),
+            nn.Linear(hidden_dim // 2, per_query_out),
         )
 
     def forward(self, control_states: torch.Tensor) -> torch.Tensor:
@@ -101,20 +110,27 @@ class ControlReadout(nn.Module):
                              控制 token 位置的 hidden states
 
         Returns:
-            raw_prior: (batch, out_dim)  连续的原始 prior
+            raw_prior: (batch, out_dim)  连续的原始 prior (M 个 UAV 的输出拼接)
         """
         B = control_states.shape[0]
+        M = self.num_queries
+        H = self.hidden_dim
 
-        # query attention pooling: query (B,1,hidden) × keys^T (B,hidden,N) → (B,1,N)
-        query = self.attn_query.expand(B, -1, -1)                    # (B, 1, hidden_dim)
-        scale = self.hidden_dim ** 0.5
-        attn_scores = torch.bmm(query, control_states.transpose(1, 2)) / scale  # (B, 1, N)
-        attn_weights = F.softmax(attn_scores, dim=-1)                # (B, 1, N)
+        # M 个 query 独立 attention: queries (B,M,H) × keys^T (B,H,N) → (B,M,N)
+        queries = self.attn_queries.expand(B, -1, -1)                     # (B, M, hidden_dim)
+        scale = H ** 0.5
+        attn_scores = torch.bmm(queries, control_states.transpose(1, 2)) / scale  # (B, M, N)
+        attn_weights = F.softmax(attn_scores, dim=-1)                     # (B, M, N)
 
-        # 加权聚合: weights (B,1,N) × values (B,N,hidden) → (B, hidden_dim)
-        pooled = torch.bmm(attn_weights, control_states).squeeze(1)  # (B, hidden_dim)
+        # 每个 query 独立池化: (B,M,N) × (B,N,H) → (B, M, H)
+        pooled = torch.bmm(attn_weights, control_states)                  # (B, M, hidden_dim)
 
-        return self.readout(pooled)
+        # 对每个 UAV 的 pooled vector 应用共享 readout
+        pooled_flat = pooled.reshape(B * M, H)                            # (B*M, H)
+        out_flat = self.readout(pooled_flat)                              # (B*M, per_query_out)
+        out = out_flat.reshape(B, M * self.per_query_out)                # (B, total_out_dim)
+
+        return out
 
 
 class DeploymentProjection(nn.Module):
@@ -349,8 +365,8 @@ class ConstraintProjectionHead(nn.Module):
         # 读出维度 = M*3 (位移) + M*K (关联) + M*(K+1) (功率)
         total_delta_dim = M * 3 + M * K + M * (K + 1)
 
-        # 控制 Token 读出
-        self.readout = ControlReadout(hidden_dim, num_control_tokens, total_delta_dim)
+        # 控制 Token 读出 (M 个 query, 每 UAV 一个)
+        self.readout = ControlReadout(hidden_dim, num_control_tokens, total_delta_dim, num_queries=M)
 
         # 残差 MLP
         self.mlp = ResidualMLP(total_delta_dim, mlp_hidden or [256, 256])
