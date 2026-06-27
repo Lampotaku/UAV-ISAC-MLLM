@@ -43,7 +43,8 @@ docs/
 ├── 02_training_log/                   训练纪实
 │   ├── sft_live.md                    当前 SFT 运行指标和配置
 │   ├── oom_incidents.md               OOM 1-5 诊断全链
-│   └── speed_optimization.md          21s→2.5s/step 提速战
+│   ├── speed_optimization.md          21s→2.5s/step 提速战
+│   └── phase1_status_2026-06-26.md    Phase 1 控制表示学习调试全纪录
 │
 ├── 03_bugs/                           Bug 注册中心
 │   ├── README.md                      严重度定义、如何登记
@@ -77,7 +78,7 @@ docs/
     ├── README.md
     ├── deprecated_experiments/        失败方案 (Plan B 等)
     ├── old_results/                   早期数据验证结果
-    ├── old_handoffs/                  旧版交接文档 (docs 16-21)
+    ├── old_handoffs/                  历史交接文档 (handoff 2026-06-26, docs 13-26)
     └── old_setup_docs/                旧版项目文档 (docs 01/08/09)
 ```
 
