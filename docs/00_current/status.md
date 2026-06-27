@@ -1,83 +1,189 @@
 ---
 type: status
 status: current
-stage: sft
-last_updated: 2026-06-26
-related: [canonical_config, sft_live, oom_incidents, verification_gaps]
+stage: phase1_debugging
+last_updated: 2026-06-27
+related: [phase1_status_2026-06-26, handoff_2026-06-26, talk, oom_incidents]
 ---
 
 # 项目当前状态
 
-**最后更新**: 2026-06-26 | **阶段**: Stage I SFT 训练进行中
+**最后更新**: 2026-06-27 | **阶段**: Phase 1 架构调试完毕，等待重跑 + SCA-FP 早停搜索
 
-## 🟢 SFT 训练状态
+## 概述
 
-| 指标 | 值 |
-|------|-----|
-| **进度** | ~80% (~7h / ~8.7h estimated) |
-| **服务器** | AutoDL RTX PRO 6000 96GB (Blackwell sm_120) |
-| **配置** | bs=2, grad_accum=8, seq=3456, SDPA, bf16, lr=2e-4 |
-| **速度** | ~4.1s/micro-batch, ~2.9h/epoch |
-| **VRAM** | ~76GB peak / 96GB available (20GB headroom) |
-| **状态** | ✅ 无 OOM, 无 CheckpointError, GPU 100% 满载 |
-| **Epochs** | 3 epochs, 1250 steps/epoch |
+UAV-ISAC-MLLM：用 Gemma 3 12B (LoRA + 约束投影头) 为 SCA-FP 数值优化器提供智能 warmstart。
 
-详细指标见 [02_training_log/sft_live.md](../02_training_log/sft_live.md)
+## 🔴 核心问题 — 控制表示学习失败
 
-## ✅ 数据生成状态
+**Step-200 初始 checkpoint 评估**：
 
-| 指标 | 值 |
-|------|-----|
-| **SFT 样本** | 5,000 (0 issues) |
-| **DPO 样本** | 186,896 (0 issues) |
-| **验证** | 全部 4 项 EDA 检查通过 |
-| **位置** | `/root/autodl-tmp/data/full5000/` |
+| 指标 | 值 | 期望 |
+|------|-----|------|
+| 文本生成 | 模式坍塌，输出乱码 | 有效 JSON |
+| Control sensitivity | **0.0000** | > 0.1 |
+| SCA-FP 加速比 | **1.0×**（无加速） | ≥ 1.5× |
 
-详细验证见 [05_data/final_validation.md](../05_data/final_validation.md)
+## 🔬 根因链（逐层确诊）
 
-## 🚫 Blocker
+### 第一层：梯度密度失衡
 
-**当前无 blocker。** SFT 训练正常运行中。
+```
+3456 个文本 token → CE loss → 密集梯度
+   8 个控制 token → 控制 loss → 稀疏梯度
+                              ↓
+               梯度密度比 = 3456:8 = 432:1
+                              ↓
+            CE 完全主导训练，控制信号被淹没
+```
+
+**同时**：`ControlReadout.mean(dim=1)` 将 8 个 control token 的 hidden states 平均为一个向量，抹平 token 间空间结构。
+
+### 第二层：单 Query 出口瓶颈（核心致命伤）
+
+注意力池化只有一个可学习 query 向量：
+- Softmax 强制注意力总和为 1 → 关注 UAV1 就必须少关注 UAV2/3/4
+- 一个 3840-dim 向量无法同时编码 4 架无人机的独立 3D 位置、关联矩阵和功率分配
+
+### 第三层：MSE 收缩效应
+
+MSE loss 天然厌恶风险。训练后期，模型发现"对每个环境输出条件均值"比"做环境特定预测"更安全（平方惩罚小），导致环境区分度（sens）在 Loss 下降的同时反而萎缩。
+
+## 🧪 修复历程
+
+### 修复 1：Attention Pooling + Phase 1 CTL-only Warmup
+
+- Mean pooling → 可学习 query attention pooling
+- Phase 1 完全关闭 CE loss，只优化 `L_ctl`
+- 切换条件：跨环境 sensitivity > 0.1
+- **结果**：sens 从 0.0000 → 0.0134（step 50），控制通路不再是死的
+
+### 失败尝试 1：32 Control Token（信息带宽扩容）
+
+- **假设**：8 token 容量不足
+- **结果**：sens 暴跌 0.0134 → 0.0021 → 0.0008
+- **诊断**：入口再大，出口仍是单 query。Softmax 将梯度稀释 32×
+
+### 失败尝试 2：LR 1e-3（优化动力学激进）
+
+- **假设**：纯 regression 任务需要更高 LR
+- **结果**：sens 从 0.0134 暴跌至 0.0061（step 54）
+- **诊断**：梯度震荡/Thrashing —— LR 不是瓶颈
+
+### 修复 2：Multi-Query Attention Pooling ✅ (commit `0546493`)
+
+单 query → **M=4 个独立 query**（每 UAV 一个）：
+- 每个 query 独立计算 softmax + 池化
+- 每个 UAV 有自己的专属"视角"读 control token
+- 共享 readout MLP（权重在所有 UAV 间复用）
+- `num_tokens` 回到 8（多 query 不需要多 token）
+
+## 📊 实验数据
+
+### 完整历史对比
+
+| Run | 配置 | Step 50 sens | 峰值 sens | 结论 |
+|-----|------|-------------|-----------|------|
+| Run 1 | 单 query, 8 token, LR 2e-4 | 0.0000 | 0.0102 @109 | 控制通路濒死 |
+| Run 2 | 单 query, 8 token, LR 5e-4 | 0.0134 | 0.0240 @152 | 慢速线性，天花板低 |
+| Run 3 | 单 query, 8 token, LR 1e-3 | 0.0061 | — | 梯度震荡，反跌 |
+| Run 4 | 单 query, 32 token, LR 5e-4 | 0.0021 | — | 注意力稀释，脑死亡 |
+| **Run 5** | **4 query, 8 token, LR 5e-4** | **0.0140** | **0.0901 @150** | ✅ 架构验证成功 |
+
+### Run 5 详细时序
+
+| Step | loss_ctl | sens | 阶段 |
+|------|----------|------|------|
+| 50 | 35.51 | 0.0140 | 对称性破缺 — 4 query 在"抢地盘" |
+| 100 | 17.88 | 0.0084 | 低垂果实 — 学会预测全局均值 |
+| 150 | 15.01 | **0.0901** | 🏔️ **峰值** — 环境区分度最高 |
+| 200 | 17.47 | 0.0705 | 开始震荡回调 |
+| 250 | **10.84** | 0.0391 | MSE 最优但 sens 腰斩 — 均值收缩 |
+
+**sens 定义**：`sens = ||δ_q(env_B) − δ_q(env_A)|| / ||δ_q(env_A)||`（seed 42 vs 43 跨环境）
+
+**sens 下降的数学原因**：
+1. **分子萎缩**（主因）：MSE 驱使模型向条件均值收缩 → 环境间绝对差异变小
+2. **分母膨胀**（次因）：模型预测的位移尺度变大 → 分母增大
+
+## 🏗️ 架构终态
+
+```
+Control Token (8 个, <ctrl_0>..<ctrl_7>)
+       ↓ Gemma 3 12B (LoRA, rank=16)
+Control Hidden States [B, 8, 3840]
+       ↓ Multi-Query Attention Pooling
+  query_0 → attn → pooled_0 [B, 3840]  (UAV 0 专属)
+  query_1 → attn → pooled_1 [B, 3840]  (UAV 1 专属)
+  query_2 → attn → pooled_2 [B, 3840]  (UAV 2 专属)
+  query_3 → attn → pooled_3 [B, 3840]  (UAV 3 专属)
+       ↓ 共享 Readout MLP (3840→1920→960→44 per UAV)
+  out_0..out_3 [B, 44 each] → concat [B, 176]
+       ↓ ResidualMLP → Unflatten → Constraint Projections
+  δ_q [B,4,3] + δ_a [B,4,20] + δ_p [B,4,21]
+```
+
+## ✅ 已完成
+
+| 项 | 状态 |
+|----|------|
+| 7 轮代码审查 + 一审修复 | ✅ |
+| 5000 环境数据生成 (SFT+DPO) | ✅ |
+| OOM #1-5 修复 (省 ~54 GB) | ✅ |
+| Plan A：纯 PyTorch CE + SDPA | ✅ |
+| 根因 1：梯度密度失衡 → Attention Pooling | ✅ |
+| 根因 2：单 Query 出口瓶颈 → Multi-Query | ✅ |
+| OOM #6 (Phase 1 Phase 2 切换双模型) | ⚠️ 未验证 |
+| Phase 1 checkpoint 保存 | ✅ (commit `910d967`, 待 push) |
+| MSE 收缩效应确诊 | ✅ |
 
 ## ⏭️ 下一步
 
-1. **SFT 完成** (预计剩余 ~1.7h) → 检查 loss 曲线和 checkpoint
-2. **Stage II DPO** — 配置就绪:
-   - bs=1, grad_accum=16, β=0.1, μ=0.05 (SFT anchor)
-   - DPO reference model 独立加载
-   - 预估 VRAM ~75GB / 96GB
-   - 命令: `python src/training/train_dpo.py --config configs/default.yaml`
-3. **评估** — 6 指标 × 9 基线
+### 1. 立即（网络恢复后）
 
-## 🟡 已知待解决问题
+```bash
+git push  # 推送 910d967 (Phase 1 checkpoint 保存)
+```
 
-| 问题 | 严重度 | 状态 | 详情 |
-|------|--------|------|------|
-| CRB metric 占位符 (evaluate.py) | P2 | 未开始 | 依赖 `channel.compute_crb()` 未实现 |
-| Multimodal 未实现 | P2 | 未开始 | 当前为 text-only BEV |
-| `from_pretrained` 绕过 `__init__` | P2 | 未开始 | 新属性需手动同步 |
-| 20 项验证缺口 | P0-P2 | 审计完成，未修复 | 见 [03_bugs/open/verification_gaps.md](../03_bugs/open/verification_gaps.md) |
+### 2. 服务器重跑 Phase 1
 
-## 📊 已解决 Bug 总览
+```bash
+cd /root/UAV-ISAC-MLLM && git pull
+conda activate uavmllm
+python src/training/train_sft.py --config configs/default.yaml --data_dir /root/autodl-tmp/data/full5000
+```
 
-| # | Bug | 严重度 | 阶段 | Commit |
-|---|-----|--------|------|--------|
-| 1 | 物理约束违反 (SCA-FP 随机初始化) | P0 | datagen | `1caa482`, `2b75aa1` |
-| 2 | 环境多样性崩溃 (RNG pickle) | P0 | datagen | `8daddac` |
-| 3 | 响应 JSON 截断 (512→1024→824 tokens) | P0 | datagen | `8daddac`, `223aace` |
-| 4-8 | OOM 1-5 (HF wrapper, contiguous, GQA, CE, CheckpointError) | P0 | sft | 见 [oom_incidents.md](../02_training_log/oom_incidents.md) |
-| 9-11 | 训练代码 bug (scheduler, zero_grad, LR) | P0 | sft | `4bc1a95`, `a52b4b8` |
-| 12-19 | 服务器运行时错误 (Blackwell 8 连击) | P0 | sft | 见 [server_runtime_errors.md](../03_bugs/resolved/server_runtime_errors.md) |
-| 20 | TensorBoard 日志静默丢失 (init_trackers) | P1 | sft | `8b5b8f1` |
+新代码会在以下时机保存 checkpoint：
+- 每 200 步：`phase1_step_200`、`phase1_step_400`
+- Phase 1 退出时（sens 触发或 max_steps）：`phase1_step_N`
 
-**全部 P0 bug 已闭合。** 详见 [03_bugs/resolved/](../03_bugs/resolved/)
+同时手动监控并记录 step 150 附近状态（sens 预测峰值区间）。
 
-## 🔑 关键经验
+### 3. 批量 SCA-FP 早停搜索
 
-1. **Unsloth 不可局部借用** — 一旦 import 就全局 monkey-patch transformers，与 Gemma 3 SDPA 冲突 → 彻底移除
-2. **Blackwell sm_120 生态不成熟** (2026-06): bitsandbytes 不支持, FA2 无预编译 wheel, FlexAttention shared memory 不足
-3. **BPE tokenizer 对浮点数碎片化严重** — 176 个 float32 可膨胀到 1678 tokens → compact JSON + 精度截断
-4. **框约束 ≠ 球约束** — L-BFGS-B 的逐轴边界构建立方体，物理约束是球体
+对候选 checkpoint（预估 150/200/250/300/400）分别跑评估：
+
+```bash
+for STEP in 200 250 300 400; do
+    python src/eval/eval_generation.py \
+        --config configs/default.yaml \
+        --checkpoint /root/autodl-tmp/checkpoints/phase1_step_${STEP} \
+        --output /root/autodl-tmp/eval/step_${STEP}/
+done
+```
+
+**核心判据**：SCA-FP 加速比（不是 sens，不是 loss_ctl）。
+
+### 4. 最佳 Checkpoint → Phase 2
+
+- 选加速比最高的 Phase 1 checkpoint
+- 手动加载该 checkpoint 启动 Phase 2 (Joint SFT+CTL)
+- 或直接设 `phase1.enabled: false` 跳过 Phase 1
+
+### 5. 长期
+
+- 如果最优在 step ~150 → Phase 1 存在特征早停点，需实现自动早停逻辑
+- 如果最优在 step 400 → sens 下降不影响下游，当前 max_steps 合理
 
 ## 📋 快速命令参考
 
@@ -89,12 +195,20 @@ conda activate uavmllm
 # 环境变量 (Blackwell 必须)
 export TORCHINDUCTOR_FLEX_ATTENTION=0
 
-# SFT 训练
-python src/training/train_sft.py --config configs/default.yaml
+# SFT 训练 (Phase 1 → Phase 2 自动)
+python src/training/train_sft.py --config configs/default.yaml --data_dir /root/autodl-tmp/data/full5000
 
-# 过拟合测试 (5 min)
+# 过拟合测试
 python scripts/test_sft_overfit.py --data-dir /root/autodl-tmp/data/full5000
 
 # 数据验证
 python scripts/validate_data.py --data-dir /root/autodl-tmp/data/full5000
 ```
+
+## 🔑 关键经验
+
+1. **MSE 代理指标陷阱**：loss_ctl 和 sens 在训练后期背离——loss 越低不代表表征越好。只有 SCA-FP 加速比是真实判据。
+2. **单 Attention Query 是回归读出的隐形杀手**：softmax 互斥性使一个 query 无法同时关注多个独立目标。Multi-Query 是正确的回归读出范式。
+3. **增加 token 数不解决出口瓶颈**：在 softmax 下，更多 token 只会稀释梯度，不会增加信息吞吐量。
+4. **Phase 1 存在早停点**：控制表征的环境区分度在中间步骤达峰后，会在 MSE 压力下向均值收缩。
+5. **Cross-Environment Sensitivity 比 Perturbation 测试有效**：原 ±10m 扰动测试因 DeploymentProjection 裁剪恒等映射而永远返回 0。
