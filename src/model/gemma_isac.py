@@ -168,12 +168,25 @@ class Gemma3ISAC(nn.Module):
             )
             self.base_model = get_peft_model(self.base_model, peft_config)
             self.base_model.gradient_checkpointing_enable()
-            # 确保 lm_head 冻结 + 权重绑定 (防御)
+            # gc 验证: 直接检查 Gemma3Model.gradient_checkpointing 属性
+            transformer = self.base_model.model.model
+            if not getattr(transformer, 'gradient_checkpointing', False):
+                import logging
+                _log = logging.getLogger(__name__)
+                _log.warning("GC not enabled on Gemma3Model after enable() — forcing")
+                transformer.gradient_checkpointing_enable()
+            # 冻结 lm_head: CE 梯度通过 frozen lm_head 回传到 hidden_states → LoRA
+            # 若 tie_word_embeddings 仍生效 → clone 解绑以免影响 embed_tokens 训练
             causal_lm = self.base_model.model
-            causal_lm.lm_head.weight.requires_grad = False
-            if (hasattr(causal_lm.config, 'tie_word_embeddings')
-                    and causal_lm.config.tie_word_embeddings):
-                causal_lm.lm_head.weight = causal_lm.get_input_embeddings().weight
+            lm_head = causal_lm.lm_head
+            embed = causal_lm.get_input_embeddings()
+            if lm_head.weight.data_ptr() == embed.weight.data_ptr():
+                # 权重重绑 → clone 解绑 + 冻结
+                lm_head._parameters['weight'] = torch.nn.Parameter(
+                    lm_head.weight.data.clone(), requires_grad=False
+                )
+            else:
+                lm_head.weight.requires_grad = False
 
         # ---- Projection Head ----
         if proj_head_config is None:
@@ -492,26 +505,40 @@ class Gemma3ISAC(nn.Module):
             # 已有训练好的 LoRA → 直接加载
             base_model = PeftModel.from_pretrained(base_model, lora_path, is_trainable=True)
 
-            # ══ OOM #6 修复: 三管齐下 ══
-            # 1) Gradient checkpointing (必须: from_pretrained 不恢复 gc 设置)
+            # ══ OOM #6 修复: gc + lm_head 冻结 ══
+            # 1) Gradient checkpointing (from_pretrained 不恢复 gc 设置)
             base_model.gradient_checkpointing_enable()
-            # 防御: 直接对底层 transformer 开 gc (PeftModel 的委托可能不完整)
             try:
                 base_model.model.model.gradient_checkpointing_enable()
             except Exception:
                 pass
+            # 验证 gc 在底层 Gemma3Model 上生效; 若失败则直接设属性硬加固
+            transformer = base_model.model.model
+            if not getattr(transformer, 'gradient_checkpointing', False):
+                import logging
+                _log = logging.getLogger(__name__)
+                _log.warning(
+                    "GC NOT enabled on Gemma3Model after all enable() calls — "
+                    "forcing via direct attr. Activations without GC consume ~60 GB."
+                )
+                transformer.gradient_checkpointing = True
+                if not hasattr(transformer, '_gradient_checkpointing_func') or \
+                   transformer._gradient_checkpointing_func is None:
+                    transformer._gradient_checkpointing_func = \
+                        torch.utils.checkpoint.checkpoint
 
-            # 2) 冻结 lm_head (省 ~12 GB: 权重 2GB + Adam m/v 8GB)
-            #    CE 梯度通过 frozen lm_head 回传到 hidden_states → LoRA, 无需训练 lm_head
+            # 2) 冻结 lm_head (省 ~12 GB Adam m/v)
+            #    检查权重是否仍与 embed_tokens 绑定; 若绑定则 clone 解绑
             causal_lm = base_model.model  # PeftModel → Gemma3ForCausalLM
-            causal_lm.lm_head.weight.requires_grad = False
-
-            # 3) 重绑 embed_tokens ↔ lm_head (PEFT modules_to_save 可能打断 tie_word_embeddings)
-            if (hasattr(causal_lm.config, 'tie_word_embeddings')
-                    and causal_lm.config.tie_word_embeddings):
-                # 强制重绑: lm_head.weight 指向 embed_tokens.weight 同一张量
-                embed = causal_lm.get_input_embeddings()
-                causal_lm.lm_head.weight = embed.weight
+            lm_head = causal_lm.lm_head
+            embed = causal_lm.get_input_embeddings()
+            if lm_head.weight.data_ptr() == embed.weight.data_ptr():
+                # 权重仍绑定 → clone 解绑, 新 tensor requires_grad=False
+                lm_head._parameters['weight'] = torch.nn.Parameter(
+                    lm_head.weight.data.clone(), requires_grad=False
+                )
+            else:
+                lm_head.weight.requires_grad = False
         elif use_4bit:
             # 4-bit 路径: 用 Unsloth 创建 fresh LoRA
             base_model = FastLanguageModel.get_peft_model(
@@ -542,12 +569,23 @@ class Gemma3ISAC(nn.Module):
             )
             base_model = get_peft_model(base_model, peft_config)
             base_model.gradient_checkpointing_enable()
-            # 确保 lm_head 冻结 + 权重绑定
+            # gc 验证
+            transformer = base_model.model.model
+            if not getattr(transformer, 'gradient_checkpointing', False):
+                import logging
+                _log = logging.getLogger(__name__)
+                _log.warning("GC not enabled on Gemma3Model after get_peft_model — forcing")
+                transformer.gradient_checkpointing_enable()
+            # 冻结 lm_head (若仍与 embed_tokens 绑定则 clone 解绑)
             causal_lm = base_model.model
-            causal_lm.lm_head.weight.requires_grad = False
-            if (hasattr(causal_lm.config, 'tie_word_embeddings')
-                    and causal_lm.config.tie_word_embeddings):
-                causal_lm.lm_head.weight = causal_lm.get_input_embeddings().weight
+            lm_head = causal_lm.lm_head
+            embed = causal_lm.get_input_embeddings()
+            if lm_head.weight.data_ptr() == embed.weight.data_ptr():
+                lm_head._parameters['weight'] = torch.nn.Parameter(
+                    lm_head.weight.data.clone(), requires_grad=False
+                )
+            else:
+                lm_head.weight.requires_grad = False
 
         # ---- 恢复 Control Token Embedding (新格式: 单独保存的 8 行) ----
         # 新 save_pretrained 只保存 LoRA + ctrl_embed.pt, 不含完整 embed_tokens.
