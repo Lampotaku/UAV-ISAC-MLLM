@@ -338,10 +338,12 @@ class Gemma3ISAC(nn.Module):
 
         prior_hat = self.projection_head(control_states.float(), q_current)
 
+        # .detach() 防御: no_grad() 下 projection_head 参数仍带 requires_grad,
+        # .cpu() 不切断 grad 属性 → 外部 .numpy() 会崩 (RuntimeError: Can't call numpy() on Tensor that requires grad)
         return {
-            "delta_q": prior_hat["delta_q"].squeeze(0).cpu().float(),      # (M, 3)
-            "delta_a": prior_hat["delta_a"].squeeze(0).cpu().float(),      # (M, K)
-            "delta_p": prior_hat["delta_p"].squeeze(0).cpu().float(),      # (M, K+1)
+            "delta_q": prior_hat["delta_q"].squeeze(0).detach().cpu().float(),      # (M, 3)
+            "delta_a": prior_hat["delta_a"].squeeze(0).detach().cpu().float(),      # (M, K)
+            "delta_p": prior_hat["delta_p"].squeeze(0).detach().cpu().float(),      # (M, K+1)
         }
 
     def save_pretrained(self, save_dir: str):

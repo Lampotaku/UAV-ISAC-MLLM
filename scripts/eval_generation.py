@@ -394,9 +394,9 @@ def run_generation_eval(model, cfg, n_samples: int = 5, n_scafp: int = 100):
         }
 
         warm_start_dict = {
-            "delta_q": ws["delta_q"].numpy(),
-            "delta_a": ws["delta_a"].numpy(),
-            "delta_p": ws["delta_p"].numpy(),
+            "delta_q": ws["delta_q"].detach().numpy(),
+            "delta_a": ws["delta_a"].detach().numpy(),
+            "delta_p": ws["delta_p"].detach().numpy(),
         }
 
         sol_warm = solver.solve(env_dict, warm_start=warm_start_dict, seed=seed)

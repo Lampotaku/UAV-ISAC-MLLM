@@ -143,19 +143,28 @@ utility=utility if np.isfinite(utility) else -np.inf,
 
 ---
 
-## B6 (P3): `eval_generation.py` 冗余 `.detach()` 调用
+## B6 (P1 → 升级 P0): `eval_generation.py` 缺 `.detach()` → Part 3 必崩
 
 ### 症状
 
 ```python
-"delta_q": ws["delta_q"].detach().numpy(),
+"delta_q": ws["delta_q"].numpy(),   # ← RuntimeError: Can't call numpy() on Tensor that requires grad
 ```
 
-`generate_warmstart` 整个方法体在 `torch.no_grad()` 上下文中执行，返回的 tensor 已无梯度图。`.detach()` 无害但误导——暗示此处可能有梯度泄露风险。
+`generate_warmstart` 虽在 `torch.no_grad()` 内执行，但 `projection_head` 的 `nn.Parameter`（如 `attn_queries`）持有 `requires_grad=True`。`.cpu()` 不切断 grad 属性，`.float()` 也不切断。返回的 tensor **并非绝对没有 grad 图**——某些 PyTorch 版本 (2.5+) 下，`no_grad()` 中的 nn.Module 调用仍可能产出带梯度元数据的 tensor。
 
-### 修复
+2026-06-28 服务器实测崩溃，Part 3 100-sample SCA-FP 评估在第一个样本直接挂掉。
 
-直接 `.numpy()`。
+### 修复 (commit: 本 commit)
+
+两处防御：
+
+1. `gemma_isac.py` `generate_warmstart` 返回值：`.detach().cpu().float()`（源头切断）
+2. `eval_generation.py` Part 3：`.detach().numpy()`（调用侧防御）
+
+### 教训
+
+**`torch.no_grad()` 不是 `.detach()` 的替代品。** `no_grad()` 阻止新操作加入计算图，但不保证已存在的 tensor 不携带 `requires_grad`。任何要喂给 numpy/scipy/pandas 的 tensor 都应该显式 `.detach()`。
 
 ---
 

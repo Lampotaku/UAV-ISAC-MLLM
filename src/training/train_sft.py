@@ -130,9 +130,14 @@ def _check_cross_env_sensitivity(
 # Training Loop
 # ================================================================
 
-def train_stage1(config_path: str, data_dir: Optional[str] = None):
+def train_stage1(config_path: str, data_dir: Optional[str] = None, resume_from: Optional[str] = None):
     """
     Stage I SFT-LoRA 主训练函数
+
+    Args:
+        config_path: yaml 配置文件路径
+        data_dir: 数据目录 (覆盖 config 中的路径)
+        resume_from: Phase 1 checkpoint 路径 → 跳过 Phase 1, 直接从 Phase 2 开始
     """
 
     # ---- 加载配置 ----
@@ -158,36 +163,60 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None):
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    # ---- 初始化模型 ----
-    logger.info("Loading Gemma3-ISAC model...")
-    model = Gemma3ISAC(
-        model_name_or_path=model_cfg["backbone"],
-        use_4bit=cfg["hardware"]["use_4bit"],
-        lora_rank=model_cfg["lora"]["rank"],
-        lora_alpha=model_cfg["lora"]["alpha"],
-        lora_dropout=model_cfg["lora"]["dropout"],
-        lora_target_modules=model_cfg["lora"]["target_modules"],
-        num_control_tokens=model_cfg["control_token"]["num_tokens"],
-        proj_head_config={
-            "hidden_dim": model_cfg["control_token"]["hidden_dim"],
-            "num_control_tokens": model_cfg["control_token"]["num_tokens"],
-            "mlp_hidden": model_cfg["projection_head"]["mlp_hidden"],
-            "readout_out_dim": model_cfg["projection_head"]["readout_out_dim"],
-            "M": sim_cfg["num_uavs"],
-            "K": sim_cfg["num_users"],
-            "area_w": sim_cfg["area_size"][0],
-            "area_h": sim_cfg["area_size"][1],
-            "h_min": sim_cfg["altitude_min_m"],
-            "h_max": sim_cfg["altitude_max_m"],
-            "v_max_dt": sim_cfg["uav_max_speed_ms"] * sim_cfg["slot_duration_s"],
-            "p_max": 10 ** ((sim_cfg["p_max_dbm"] - 30) / 10),
-            "K_max": sim_cfg["load_cap_per_uav"],
-            "tau_power": model_cfg["projection_head"]["tau_power"],
-            "tau_assoc": model_cfg["projection_head"]["tau_assoc"],
-            "sinkhorn_iters": model_cfg["projection_head"]["sinkhorn_iters"],
-        },
-        attn_implementation=model_cfg.get("attn_implementation", "flash_attention_2"),
-    )
+    # ---- Proj head config (shared by init / resume paths) ----
+    _proj_head_cfg = {
+        "hidden_dim": model_cfg["control_token"]["hidden_dim"],
+        "num_control_tokens": model_cfg["control_token"]["num_tokens"],
+        "mlp_hidden": model_cfg["projection_head"]["mlp_hidden"],
+        "readout_out_dim": model_cfg["projection_head"]["readout_out_dim"],
+        "M": sim_cfg["num_uavs"],
+        "K": sim_cfg["num_users"],
+        "area_w": sim_cfg["area_size"][0],
+        "area_h": sim_cfg["area_size"][1],
+        "h_min": sim_cfg["altitude_min_m"],
+        "h_max": sim_cfg["altitude_max_m"],
+        "v_max_dt": sim_cfg["uav_max_speed_ms"] * sim_cfg["slot_duration_s"],
+        "p_max": 10 ** ((sim_cfg["p_max_dbm"] - 30) / 10),
+        "K_max": sim_cfg["load_cap_per_uav"],
+        "tau_power": model_cfg["projection_head"]["tau_power"],
+        "tau_assoc": model_cfg["projection_head"]["tau_assoc"],
+        "sinkhorn_iters": model_cfg["projection_head"]["sinkhorn_iters"],
+    }
+
+    # ---- 初始化模型 (fresh / resume) ----
+    if resume_from:
+        logger.info(f"Resuming from Phase 1 checkpoint: {resume_from}")
+        logger.info("  → Skipping Phase 1, starting Phase 2 directly")
+        model = Gemma3ISAC.from_pretrained(
+            load_dir=resume_from,
+            base_model_name=model_cfg["backbone"],
+            use_4bit=cfg["hardware"]["use_4bit"],
+            lora_rank=model_cfg["lora"]["rank"],
+            lora_alpha=model_cfg["lora"]["alpha"],
+            lora_dropout=model_cfg["lora"]["dropout"],
+            lora_target_modules=model_cfg["lora"]["target_modules"],
+            num_control_tokens=model_cfg["control_token"]["num_tokens"],
+            torch_dtype=torch.bfloat16,
+            attn_implementation=model_cfg.get("attn_implementation", "flash_attention_2"),
+            proj_head_config=_proj_head_cfg,
+        )
+        model = model.to("cuda")
+        model.train()
+        # Force-skip Phase 1: 模型已完成 CTL-only 预训练
+        train_cfg["phase1"] = {"enabled": False}
+    else:
+        logger.info("Loading Gemma3-ISAC model...")
+        model = Gemma3ISAC(
+            model_name_or_path=model_cfg["backbone"],
+            use_4bit=cfg["hardware"]["use_4bit"],
+            lora_rank=model_cfg["lora"]["rank"],
+            lora_alpha=model_cfg["lora"]["alpha"],
+            lora_dropout=model_cfg["lora"]["dropout"],
+            lora_target_modules=model_cfg["lora"]["target_modules"],
+            num_control_tokens=model_cfg["control_token"]["num_tokens"],
+            proj_head_config=_proj_head_cfg,
+            attn_implementation=model_cfg.get("attn_implementation", "flash_attention_2"),
+        )
 
     # ---- 加载数据集 ----
     sft_file = os.path.join(data_dir, data_cfg["sft_file"]) if data_dir else os.path.join(data_cfg["output_dir"], data_cfg["sft_file"])
@@ -570,6 +599,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="configs/default.yaml")
     parser.add_argument("--data_dir", type=str, default=None)
+    parser.add_argument("--resume_from", type=str, default=None,
+                        help="Resume from Phase 1 checkpoint → skip Phase 1, start Phase 2 directly")
     args = parser.parse_args()
 
-    train_stage1(args.config, args.data_dir)
+    train_stage1(args.config, args.data_dir, resume_from=args.resume_from)
