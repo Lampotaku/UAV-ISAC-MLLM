@@ -1,16 +1,24 @@
 """
 轻量级 Generation Eval — 不花钱的 checkpoint 质量检查
 
-评估两个维度:
+评估三个维度:
   1. 文本生成质量: 模型能不能输出合法 JSON? 有没有重复/乱码/模板化?
   2. Control-conditioned: 改 q_current 或 prompt, delta 预测跟着变吗?
+  3. 批量 SCA-FP 加速比: warmstart vs cold-start, N 个样本的均值 ± 方差
 
 用法 (服务器上):
   cd /root/UAV-ISAC-MLLM
+  # 快速抽查 (Parts 1-2 only, 5 samples)
   python scripts/eval_generation.py \
-    --checkpoint /root/autodl-tmp/checkpoints/stage1_step_200 \
+    --checkpoint /root/autodl-tmp/checkpoints/phase1_step_150 \
     --config configs/default.yaml \
-    --n_samples 5
+    --n_samples 5 --n_scafp 0
+
+  # 完整评估 (Part 3 用 100 samples 测加速比)
+  python scripts/eval_generation.py \
+    --checkpoint /root/autodl-tmp/checkpoints/phase1_step_150 \
+    --config configs/default.yaml \
+    --n_samples 3 --n_scafp 100
 """
 
 # ⚠️ 必须在 import numpy / torch 之前！
@@ -217,8 +225,8 @@ def check_json_validity(text: str) -> dict:
     return result
 
 
-def run_generation_eval(model, cfg, n_samples: int = 5):
-    """主评估: 文本生成 + control 预测"""
+def run_generation_eval(model, cfg, n_samples: int = 5, n_scafp: int = 100):
+    """主评估: 文本生成 + control 预测 + 批量 SCA-FP 加速比"""
     sim_cfg = cfg["simulation"]
 
     print(f"\n{'='*72}")
@@ -313,28 +321,11 @@ def run_generation_eval(model, cfg, n_samples: int = 5):
             print(f"    Δ vs zero:       L2 ratio = {rel_change_zero:.4f}")
 
     print(f"\n{'='*72}")
-    print("PART 3: Quick Quantitative (warmstart vs no-warmstart on 1 sample)")
+    print(f"PART 3: Batch SCA-FP Acceleration Ratio ({n_scafp} samples)")
     print(f"{'='*72}")
 
     try:
         from src.solver import SCAFPOptimizer, SCAFPConfig
-
-        scenario_gen = ISACScenarioGenerator(
-            num_uavs=sim_cfg["num_uavs"],
-            num_users=sim_cfg["num_users"],
-            num_targets=sim_cfg["num_targets"],
-            area_size=tuple(sim_cfg["area_size"]),
-            carrier_freq_ghz=sim_cfg["carrier_freq_ghz"],
-            bandwidth_mhz=sim_cfg["bandwidth_mhz"],
-            num_antennas=sim_cfg["num_antennas_tx"],
-            p_max_dbm=sim_cfg["p_max_dbm"],
-            seed=999,
-        )
-        env = scenario_gen.sample(999)
-        prompt = build_full_prompt(env, sim_cfg)
-        q = torch.tensor(env.q_current, dtype=torch.float32)
-
-        ws = model.generate_warmstart(prompt, q_current=q.clone())
 
         noise_power = 10 ** (
             (-174 + 10 * np.log10(sim_cfg["bandwidth_mhz"] * 1e6)
@@ -362,39 +353,72 @@ def run_generation_eval(model, cfg, n_samples: int = 5):
             load_cap=sim_cfg["load_cap_per_uav"],
         )
 
-        env_dict = {
-            "q_current": env.q_current,
-            "user_positions": env.u_positions,
-            "target_positions": env.s_positions,
-            "channel_gains": env.channel_gains_users,
-            "user_weights": env.user_weights.copy(),
-            "association": env.association,
-        }
+        scenario_gen = ISACScenarioGenerator(
+            num_uavs=sim_cfg["num_uavs"],
+            num_users=sim_cfg["num_users"],
+            num_targets=sim_cfg["num_targets"],
+            area_size=tuple(sim_cfg["area_size"]),
+            carrier_freq_ghz=sim_cfg["carrier_freq_ghz"],
+            bandwidth_mhz=sim_cfg["bandwidth_mhz"],
+            num_antennas=sim_cfg["num_antennas_tx"],
+            p_max_dbm=sim_cfg["p_max_dbm"],
+            seed=999,
+        )
 
-        warm_start_dict = {
-            "delta_q": ws["delta_q"].detach().numpy(),
-            "delta_a": ws["delta_a"].detach().numpy(),
-            "delta_p": ws["delta_p"].detach().numpy(),
-        }
+        speedups = []
+        warm_iters_list = []
+        cold_iters_list = []
 
-        # With warmstart
-        sol_warm = solver.solve(env_dict, warm_start=warm_start_dict, seed=999)
-        # Without warmstart
-        sol_cold = solver.solve(env_dict, warm_start=None, seed=999)
+        for idx in tqdm(range(n_scafp), desc="SCA-FP eval"):
+            seed = 900 + idx
+            env = scenario_gen.sample(seed)
+            prompt = build_full_prompt(env, sim_cfg)
+            q = torch.tensor(env.q_current, dtype=torch.float32)
 
-        print(f"  With warmstart:    {sol_warm.iterations} SCA-FP iterations")
-        print(f"  Without warmstart: {sol_cold.iterations} SCA-FP iterations")
-        print(f"  Speedup: {sol_cold.iterations / max(sol_warm.iterations, 1):.1f}x")
+            ws = model.generate_warmstart(prompt, q_current=q.clone())
+
+            env_dict = {
+                "q_current": env.q_current,
+                "user_positions": env.u_positions,
+                "target_positions": env.s_positions,
+                "channel_gains": env.channel_gains_users,
+                "user_weights": env.user_weights.copy(),
+                "association": env.association,
+            }
+
+            warm_start_dict = {
+                "delta_q": ws["delta_q"].detach().numpy(),
+                "delta_a": ws["delta_a"].detach().numpy(),
+                "delta_p": ws["delta_p"].detach().numpy(),
+            }
+
+            sol_warm = solver.solve(env_dict, warm_start=warm_start_dict, seed=seed)
+            sol_cold = solver.solve(env_dict, warm_start=None, seed=seed)
+
+            speedup = sol_cold.iterations / max(sol_warm.iterations, 1)
+            speedups.append(speedup)
+            warm_iters_list.append(sol_warm.iterations)
+            cold_iters_list.append(sol_cold.iterations)
+
+        speedups_arr = np.array(speedups)
+        warm_arr = np.array(warm_iters_list)
+        cold_arr = np.array(cold_iters_list)
+
+        print(f"\n  Warmstart iterations:   {warm_arr.mean():.1f} ± {warm_arr.std():.1f}")
+        print(f"  Cold-start iterations:  {cold_arr.mean():.1f} ± {cold_arr.std():.1f}")
+        print(f"  SCA-FP Speedup:         {speedups_arr.mean():.3f}x ± {speedups_arr.std():.3f}")
+        print(f"  Min/Max speedup:        {speedups_arr.min():.3f}x / {speedups_arr.max():.3f}x")
+        print(f"  Speedup ≥ 1.5×:         {(speedups_arr >= 1.5).sum()}/{n_scafp} samples ({(speedups_arr >= 1.5).mean()*100:.1f}%)")
 
     except Exception as e:
         print(f"  Skipped (solver import failed): {e}")
 
     print(f"\n{'='*72}")
     print("Eval complete. Key questions to answer:")
-    print("  1. Is generated text valid JSON?")
-    print("  2. Are delta values in reasonable range (not NaN, not all-zero, not all-same)?")
-    print("  3. Does perturbing q_current change the predictions?")
-    print("  4. Does warmstart reduce SCA-FP iterations vs cold start?")
+    print("  1. Is generated text valid JSON? [Part 1]")
+    print("  2. Are delta values in reasonable range (not NaN, not all-zero, not all-same)? [Part 2]")
+    print("  3. Does perturbing q_current change the predictions? [Part 2]")
+    print(f"  4. Mean SCA-FP speedup ≥ 1.5×?  ← THE ONLY METRIC THAT MATTERS [Part 3]")
     print(f"{'='*72}")
 
 
@@ -404,8 +428,10 @@ if __name__ == "__main__":
                         help="Path to checkpoint dir (e.g. /root/autodl-tmp/checkpoints/stage1_step_200)")
     parser.add_argument("--config", type=str, default="configs/default.yaml")
     parser.add_argument("--n_samples", type=int, default=5,
-                        help="Number of test samples (default 5)")
+                        help="Number of test samples for Parts 1 & 2 (default 5)")
+    parser.add_argument("--n_scafp", type=int, default=100,
+                        help="Number of SCA-FP samples for Part 3 acceleration ratio (default 100)")
     args = parser.parse_args()
 
     model, cfg = load_model(args.checkpoint, args.config)
-    run_generation_eval(model, cfg, args.n_samples)
+    run_generation_eval(model, cfg, args.n_samples, args.n_scafp)
