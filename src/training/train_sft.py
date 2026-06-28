@@ -202,8 +202,30 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None, resume_from: 
         )
         model = model.to("cuda")
         model.train()
-        # 确保 gradient checkpointing (防御: from_pretrained 旧 checkpoint 路径可能漏掉)
+        # ══ OOM #6 防御: gc + lm_head 冻结 + 权重重绑 ══
         model.base_model.gradient_checkpointing_enable()
+        # 直达底层 transformer (PeftModel 委托链可能不完整)
+        try:
+            model.base_model.model.model.gradient_checkpointing_enable()
+        except Exception:
+            pass
+        # 冻结 lm_head + 重绑 tie_word_embeddings (PEFT modules_to_save 可能打断绑定)
+        causal_lm = model.base_model.model  # PeftModel → Gemma3ForCausalLM
+        causal_lm.lm_head.weight.requires_grad = False
+        if (hasattr(causal_lm.config, 'tie_word_embeddings')
+                and causal_lm.config.tie_word_embeddings):
+            causal_lm.lm_head.weight = causal_lm.get_input_embeddings().weight
+        # 验证 gc 状态 (写入日志确认修复生效)
+        gc_ok = getattr(model.base_model.model.model, 'gradient_checkpointing', False)
+        tied_ok = (
+            causal_lm.lm_head.weight.data_ptr()
+            == causal_lm.get_input_embeddings().weight.data_ptr()
+        )
+        logger.info(
+            f"OOM6 guards: gc={'✓' if gc_ok else '✗ FAILED'}, "
+            f"tied={'✓' if tied_ok else '✗ FAILED'}, "
+            f"lm_head_grad={causal_lm.lm_head.weight.requires_grad}"
+        )
         # Force-skip Phase 1: 模型已完成 CTL-only 预训练
         train_cfg["phase1"] = {"enabled": False}
     else:
@@ -546,6 +568,9 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None, resume_from: 
                         logger.warning(f"Grad diag OOM, disabling: {e}")
                         lora_params = []  # 永久禁用本 session
                     _diag_pending = False
+
+                # 释放 logits (3.5 GB bf16) — CE loss 已计算完毕, 省给 backward 峰值
+                del outputs["logits"]
 
                 # 反向传播
                 accelerator.backward(total_loss)

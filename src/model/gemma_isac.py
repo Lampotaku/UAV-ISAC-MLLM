@@ -155,16 +155,25 @@ class Gemma3ISAC(nn.Module):
         else:
             # Native PEFT 路径: LoraConfig + get_peft_model
             # modules_to_save 确保新增的控制 token embedding 参与训练
+            # 注意: modules_to_save 仅含 embed_tokens (不含 lm_head)
+            # lm_head 冻结: CE 梯度通过 frozen lm_head 回传到 hidden_states → LoRA
+            # 含 lm_head 会打断 Gemma 3 的 tie_word_embeddings, 浪费 ~12 GB
             peft_config = LoraConfig(
                 r=lora_rank,
                 lora_alpha=lora_alpha,
                 target_modules=lora_target_modules,
                 lora_dropout=lora_dropout,
                 bias="none",
-                modules_to_save=["embed_tokens", "lm_head"],
+                modules_to_save=["embed_tokens"],
             )
             self.base_model = get_peft_model(self.base_model, peft_config)
             self.base_model.gradient_checkpointing_enable()
+            # 确保 lm_head 冻结 + 权重绑定 (防御)
+            causal_lm = self.base_model.model
+            causal_lm.lm_head.weight.requires_grad = False
+            if (hasattr(causal_lm.config, 'tie_word_embeddings')
+                    and causal_lm.config.tie_word_embeddings):
+                causal_lm.lm_head.weight = causal_lm.get_input_embeddings().weight
 
         # ---- Projection Head ----
         if proj_head_config is None:
@@ -482,7 +491,27 @@ class Gemma3ISAC(nn.Module):
         if os.path.exists(lora_path):
             # 已有训练好的 LoRA → 直接加载
             base_model = PeftModel.from_pretrained(base_model, lora_path, is_trainable=True)
+
+            # ══ OOM #6 修复: 三管齐下 ══
+            # 1) Gradient checkpointing (必须: from_pretrained 不恢复 gc 设置)
             base_model.gradient_checkpointing_enable()
+            # 防御: 直接对底层 transformer 开 gc (PeftModel 的委托可能不完整)
+            try:
+                base_model.model.model.gradient_checkpointing_enable()
+            except Exception:
+                pass
+
+            # 2) 冻结 lm_head (省 ~12 GB: 权重 2GB + Adam m/v 8GB)
+            #    CE 梯度通过 frozen lm_head 回传到 hidden_states → LoRA, 无需训练 lm_head
+            causal_lm = base_model.model  # PeftModel → Gemma3ForCausalLM
+            causal_lm.lm_head.weight.requires_grad = False
+
+            # 3) 重绑 embed_tokens ↔ lm_head (PEFT modules_to_save 可能打断 tie_word_embeddings)
+            if (hasattr(causal_lm.config, 'tie_word_embeddings')
+                    and causal_lm.config.tie_word_embeddings):
+                # 强制重绑: lm_head.weight 指向 embed_tokens.weight 同一张量
+                embed = causal_lm.get_input_embeddings()
+                causal_lm.lm_head.weight = embed.weight
         elif use_4bit:
             # 4-bit 路径: 用 Unsloth 创建 fresh LoRA
             base_model = FastLanguageModel.get_peft_model(
@@ -502,16 +531,23 @@ class Gemma3ISAC(nn.Module):
                     embed.weight.requires_grad = True
         else:
             # Native PEFT 路径: LoraConfig + get_peft_model
+            # (不含 lm_head: 冻结 lm_head 省 ~12 GB, 梯度通过 frozen lm_head 回传)
             peft_config = LoraConfig(
                 r=lora_rank,
                 lora_alpha=lora_alpha,
                 target_modules=lora_target_modules,
                 lora_dropout=lora_dropout,
                 bias="none",
-                modules_to_save=["embed_tokens", "lm_head"],
+                modules_to_save=["embed_tokens"],
             )
             base_model = get_peft_model(base_model, peft_config)
             base_model.gradient_checkpointing_enable()
+            # 确保 lm_head 冻结 + 权重绑定
+            causal_lm = base_model.model
+            causal_lm.lm_head.weight.requires_grad = False
+            if (hasattr(causal_lm.config, 'tie_word_embeddings')
+                    and causal_lm.config.tie_word_embeddings):
+                causal_lm.lm_head.weight = causal_lm.get_input_embeddings().weight
 
         # ---- 恢复 Control Token Embedding (新格式: 单独保存的 8 行) ----
         # 新 save_pretrained 只保存 LoRA + ctrl_embed.pt, 不含完整 embed_tokens.
