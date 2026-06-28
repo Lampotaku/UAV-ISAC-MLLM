@@ -27,6 +27,7 @@ last_updated: 2026-06-26
 | 5 | 训练代码 Bug (scheduler/zero_grad/LR) | P0 | sft | [training_code_bugs.md](resolved/training_code_bugs.md) |
 | 6 | OOM 1-5 (HF wrapper→CE→CheckpointError) | P0 | sft | [oom_1_through_5.md](resolved/oom_1_through_5.md) |
 | 7 | TensorBoard 日志静默丢失 (缺失 init_trackers) | P1 | sft | [tensorboard_init_trackers.md](resolved/tensorboard_init_trackers.md) |
+| 8 | Eval Pipeline 审查 — 7 处缺陷闭合 (tqdm/CPU/加速比) | P0 | eval | [eval_pipeline_7_bugs.md](resolved/eval_pipeline_7_bugs.md) |
 
 **全部 P0/P1 bug 已解决。**
 
