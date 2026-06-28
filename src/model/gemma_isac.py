@@ -345,19 +345,57 @@ class Gemma3ISAC(nn.Module):
         }
 
     def save_pretrained(self, save_dir: str):
-        """保存 LoRA 权重 + Projection Head"""
+        """
+        保存 LoRA adapter + Control Token Embedding + Projection Head + Tokenizer
+
+        ⚠️  关键优化: 不保存 modules_to_save (embed_tokens + lm_head) 的完整 256K 词表
+        权重 (→4GB), 只保存 8 个 control token 对应的行 (→60KB)。
+        4GB → ~100MB per checkpoint。
+        """
+        import json
+        from safetensors.torch import save_file as safe_save_file
+        from peft.utils.save_and_load import get_peft_model_state_dict
+
         os.makedirs(save_dir, exist_ok=True)
+        lora_dir = os.path.join(save_dir, "lora")
+        os.makedirs(lora_dir, exist_ok=True)
 
-        # 保存 LoRA (Unsloth model 兼容 PEFT save)
-        self.base_model.save_pretrained(os.path.join(save_dir, "lora"))
+        # ── Step 1: 分离 LoRA 权重 vs modules_to_save 权重 ──
+        full_state = get_peft_model_state_dict(self.base_model)
+        lora_state = {}
+        for key, tensor in full_state.items():
+            if "lora_" in key:
+                lora_state[key] = tensor
+            # modules_to_save 的 key (无 "lora_") 跳过 — 单独保存 control token 行
 
-        # 保存 Projection Head
+        # ── Step 2: 保存精简版 LoRA safetensors ──
+        safe_save_file(lora_state, os.path.join(lora_dir, "adapter_model.safetensors"))
+
+        # ── Step 3: 保存 adapter_config.json (不含 modules_to_save) ──
+        peft_cfg = self.base_model.peft_config["default"]
+        cfg_dict = peft_cfg.to_dict()
+        cfg_dict.pop("modules_to_save", None)
+        with open(os.path.join(lora_dir, "adapter_config.json"), "w") as f:
+            json.dump(cfg_dict, f, indent=2)
+
+        # ── Step 4: 只保存 control token 的 embedding 行 (~60KB vs 4GB) ──
+        embed = self.base_model.get_input_embeddings()
+        ctrl_embed = embed.weight.data[self.control_token_ids].clone().cpu()
+        torch.save(ctrl_embed, os.path.join(save_dir, "ctrl_embed.pt"))
+
+        # lm_head: 仅当与 embed 不共享权重时保存 (Gemma 3 默认 weight tying)
+        output_embeds = self.base_model.get_output_embeddings()
+        if output_embeds is not None and output_embeds.weight.data_ptr() != embed.weight.data_ptr():
+            ctrl_lm = output_embeds.weight.data[self.control_token_ids].clone().cpu()
+            torch.save(ctrl_lm, os.path.join(save_dir, "ctrl_lm_head.pt"))
+
+        # ── Step 5: 保存 Projection Head ──
         torch.save(
             self.projection_head.state_dict(),
             os.path.join(save_dir, "projection_head.pt"),
         )
 
-        # 保存 tokenizer
+        # ── Step 6: 保存 tokenizer ──
         self.tokenizer.save_pretrained(os.path.join(save_dir, "tokenizer"))
 
     @classmethod
@@ -471,6 +509,27 @@ class Gemma3ISAC(nn.Module):
             )
             base_model = get_peft_model(base_model, peft_config)
             base_model.gradient_checkpointing_enable()
+
+        # ---- 恢复 Control Token Embedding (新格式: 单独保存的 8 行) ----
+        # 新 save_pretrained 只保存 LoRA + ctrl_embed.pt, 不含完整 embed_tokens.
+        # 此处将保存的 8 行 patch 回 base_model embedding (覆盖随机初始化).
+        ctrl_embed_path = os.path.join(load_dir, "ctrl_embed.pt")
+        if os.path.exists(ctrl_embed_path):
+            ctrl_embed = torch.load(ctrl_embed_path, map_location="cpu")
+            embed = base_model.get_input_embeddings()
+            embed.weight.data[control_token_ids] = ctrl_embed.to(
+                dtype=embed.weight.dtype, device=embed.weight.device
+            )
+            # lm_head: 仅当独立文件存在时 patch (共享权重时无需)
+            ctrl_lm_path = os.path.join(load_dir, "ctrl_lm_head.pt")
+            if os.path.exists(ctrl_lm_path):
+                ctrl_lm = torch.load(ctrl_lm_path, map_location="cpu")
+                output_embeds = base_model.get_output_embeddings()
+                if output_embeds is not None:
+                    output_embeds.weight.data[control_token_ids] = ctrl_lm.to(
+                        dtype=output_embeds.weight.dtype,
+                        device=output_embeds.weight.device,
+                    )
 
         # ---- 加载 Projection Head ----
         if proj_head_config is None:
