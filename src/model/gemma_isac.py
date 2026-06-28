@@ -482,6 +482,7 @@ class Gemma3ISAC(nn.Module):
         if os.path.exists(lora_path):
             # 已有训练好的 LoRA → 直接加载
             base_model = PeftModel.from_pretrained(base_model, lora_path, is_trainable=True)
+            base_model.gradient_checkpointing_enable()
         elif use_4bit:
             # 4-bit 路径: 用 Unsloth 创建 fresh LoRA
             base_model = FastLanguageModel.get_peft_model(

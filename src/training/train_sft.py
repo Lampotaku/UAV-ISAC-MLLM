@@ -202,6 +202,8 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None, resume_from: 
         )
         model = model.to("cuda")
         model.train()
+        # 确保 gradient checkpointing (防御: from_pretrained 旧 checkpoint 路径可能漏掉)
+        model.base_model.gradient_checkpointing_enable()
         # Force-skip Phase 1: 模型已完成 CTL-only 预训练
         train_cfg["phase1"] = {"enabled": False}
     else:
