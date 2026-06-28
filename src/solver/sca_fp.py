@@ -180,9 +180,9 @@ class SCAFPOptimizer:
             A=A,
             W_c_power=P_comm,
             W_s_power=P_sense,
-            utility=utility,
+            utility=utility if np.isfinite(utility) else -np.inf,
             iterations=outer_iter + 1,
-            converged=(outer_iter + 1 < self.cfg.max_outer_iters),
+            converged=(outer_iter + 1 < self.cfg.max_outer_iters) and np.isfinite(utility),
             solve_time=elapsed,
         )
 

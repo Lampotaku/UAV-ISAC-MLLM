@@ -180,10 +180,10 @@ python src/training/train_sft.py --config configs/default.yaml --data_dir /root/
 ```bash
 # 批量评估
 for STEP in 150 200 250 300 400; do
-    python src/eval/eval_generation.py \
+    python scripts/eval_generation.py \
         --config configs/default.yaml \
         --checkpoint /root/autodl-tmp/checkpoints/phase1_step_${STEP} \
-        --output /root/autodl-tmp/eval/step_${STEP}/
+        --n_samples 3 --n_scafp 100
 done
 ```
 
@@ -248,10 +248,10 @@ python src/training/train_sft.py --config configs/default.yaml --data_dir /root/
 
 # 批量 SCA-FP 评估 (Phase 1 完成后)
 for STEP in 150 200 250 300 400; do
-    python src/eval/eval_generation.py \
+    python scripts/eval_generation.py \
         --config configs/default.yaml \
         --checkpoint /root/autodl-tmp/checkpoints/phase1_step_${STEP} \
-        --output /root/autodl-tmp/eval/step_${STEP}/
+        --n_samples 3 --n_scafp 100
 done
 
 # 跳过 Phase 1 直接跑 Phase 2 (用最佳 checkpoint)

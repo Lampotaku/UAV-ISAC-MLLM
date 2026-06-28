@@ -121,6 +121,7 @@ def run_evaluation(
                 "K_max": sim_cfg["load_cap_per_uav"],
             },
         )
+        model = model.to("cuda")
         model.eval()
         device = next(model.parameters()).device
     else:
@@ -132,7 +133,9 @@ def run_evaluation(
         "mean_sensing_sinr_db": [],
         "mean_crb": [],
         "joint_satisfaction": [],
-        "sca_fp_iterations": [],
+        "sca_fp_iterations_warm": [],
+        "sca_fp_iterations_cold": [],
+        "sca_fp_speedup": [],
         "inference_latency_ms": [],
     }
 
@@ -224,10 +227,16 @@ def _evaluate_one_sample(
 
     inference_time_ms = (time.time() - t0) * 1000
 
-    # ---- SCA-FP 优化 ----
-    sol = solver.solve(env_dict, warm_start=warm_start_dict, seed=sample_id)
+    # ---- SCA-FP 优化 (warmstart) ----
+    sol_warm = solver.solve(env_dict, warm_start=warm_start_dict, seed=sample_id)
 
-    # ---- 计算指标 ----
+    # ---- SCA-FP 优化 (cold-start baseline) ----
+    sol_cold = solver.solve(env_dict, warm_start=None, seed=sample_id)
+    speedup = sol_cold.iterations / max(sol_warm.iterations, 1)
+
+    # ---- 计算指标 (使用 warmstart 解) ----
+    sol = sol_warm  # 指标基于 warmstart 结果
+
     # Sum rate
     sum_rate = 0.0
     for m in range(solver.M):
@@ -296,7 +305,9 @@ def _evaluate_one_sample(
         "mean_sensing_sinr_db": float(mean_sinr_db),
         "mean_crb": 0.0,  # 需要 channel.compute_crb
         "joint_satisfaction": float(joint_sat),
-        "sca_fp_iterations": float(sol.iterations),
+        "sca_fp_iterations_warm": float(sol_warm.iterations),
+        "sca_fp_iterations_cold": float(sol_cold.iterations),
+        "sca_fp_speedup": float(speedup),
         "inference_latency_ms": float(inference_time_ms),
     }
 

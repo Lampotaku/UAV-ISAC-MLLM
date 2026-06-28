@@ -40,6 +40,7 @@ import argparse
 import torch
 import numpy as np
 from pathlib import Path
+from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -326,92 +327,96 @@ def run_generation_eval(model, cfg, n_samples: int = 5, n_scafp: int = 100):
 
     try:
         from src.solver import SCAFPOptimizer, SCAFPConfig
-
-        noise_power = 10 ** (
-            (-174 + 10 * np.log10(sim_cfg["bandwidth_mhz"] * 1e6)
-             + sim_cfg["noise_figure_db"] - 30) / 10
-        )
-
-        solver_cfg = SCAFPConfig(
-            max_outer_iters=30, max_inner_iters=50, tol=1e-4,
-            lambda_sensing=0.5, lambda_idle_penalty=5.0,
-            sinr_c_min=10 ** (sim_cfg["sinr_c_min_db"] / 10),
-            sinr_s_min=10 ** (sim_cfg["sinr_s_min_db"] / 10),
-            verbose=False,
-        )
-
-        solver = SCAFPOptimizer(
-            config=solver_cfg,
-            M=sim_cfg["num_uavs"], K=sim_cfg["num_users"], T=sim_cfg["num_targets"],
-            N_t=sim_cfg["num_antennas_tx"],
-            N_r=sim_cfg.get("num_antennas_rx", sim_cfg["num_antennas_tx"]),
-            carrier_freq_ghz=sim_cfg["carrier_freq_ghz"],
-            area_size=tuple(sim_cfg["area_size"]),
-            altitude_range=(sim_cfg["altitude_min_m"], sim_cfg["altitude_max_m"]),
-            p_max=10 ** ((sim_cfg["p_max_dbm"] - 30) / 10),
-            noise_power=noise_power,
-            load_cap=sim_cfg["load_cap_per_uav"],
-        )
-
-        scenario_gen = ISACScenarioGenerator(
-            num_uavs=sim_cfg["num_uavs"],
-            num_users=sim_cfg["num_users"],
-            num_targets=sim_cfg["num_targets"],
-            area_size=tuple(sim_cfg["area_size"]),
-            carrier_freq_ghz=sim_cfg["carrier_freq_ghz"],
-            bandwidth_mhz=sim_cfg["bandwidth_mhz"],
-            num_antennas=sim_cfg["num_antennas_tx"],
-            p_max_dbm=sim_cfg["p_max_dbm"],
-            seed=999,
-        )
-
-        speedups = []
-        warm_iters_list = []
-        cold_iters_list = []
-
-        for idx in tqdm(range(n_scafp), desc="SCA-FP eval"):
-            seed = 900 + idx
-            env = scenario_gen.sample(seed)
-            prompt = build_full_prompt(env, sim_cfg)
-            q = torch.tensor(env.q_current, dtype=torch.float32)
-
-            ws = model.generate_warmstart(prompt, q_current=q.clone())
-
-            env_dict = {
-                "q_current": env.q_current,
-                "user_positions": env.u_positions,
-                "target_positions": env.s_positions,
-                "channel_gains": env.channel_gains_users,
-                "user_weights": env.user_weights.copy(),
-                "association": env.association,
-            }
-
-            warm_start_dict = {
-                "delta_q": ws["delta_q"].detach().numpy(),
-                "delta_a": ws["delta_a"].detach().numpy(),
-                "delta_p": ws["delta_p"].detach().numpy(),
-            }
-
-            sol_warm = solver.solve(env_dict, warm_start=warm_start_dict, seed=seed)
-            sol_cold = solver.solve(env_dict, warm_start=None, seed=seed)
-
-            speedup = sol_cold.iterations / max(sol_warm.iterations, 1)
-            speedups.append(speedup)
-            warm_iters_list.append(sol_warm.iterations)
-            cold_iters_list.append(sol_cold.iterations)
-
-        speedups_arr = np.array(speedups)
-        warm_arr = np.array(warm_iters_list)
-        cold_arr = np.array(cold_iters_list)
-
-        print(f"\n  Warmstart iterations:   {warm_arr.mean():.1f} ± {warm_arr.std():.1f}")
-        print(f"  Cold-start iterations:  {cold_arr.mean():.1f} ± {cold_arr.std():.1f}")
-        print(f"  SCA-FP Speedup:         {speedups_arr.mean():.3f}x ± {speedups_arr.std():.3f}")
-        print(f"  Min/Max speedup:        {speedups_arr.min():.3f}x / {speedups_arr.max():.3f}x")
-        print(f"  Speedup ≥ 1.5×:         {(speedups_arr >= 1.5).sum()}/{n_scafp} samples ({(speedups_arr >= 1.5).mean()*100:.1f}%)")
-
-    except Exception as e:
+    except ImportError as e:
         print(f"  Skipped (solver import failed): {e}")
+        print(f"\n{'='*72}")
+        print("Eval complete (Parts 1-2 only).")
+        print(f"{'='*72}")
+        return
+
+    noise_power = 10 ** (
+        (-174 + 10 * np.log10(sim_cfg["bandwidth_mhz"] * 1e6)
+         + sim_cfg["noise_figure_db"] - 30) / 10
+    )
+
+    solver_cfg = SCAFPConfig(
+        max_outer_iters=30, max_inner_iters=50, tol=1e-4,
+        lambda_sensing=0.5, lambda_idle_penalty=5.0,
+        sinr_c_min=10 ** (sim_cfg["sinr_c_min_db"] / 10),
+        sinr_s_min=10 ** (sim_cfg["sinr_s_min_db"] / 10),
+        verbose=False,
+    )
+
+    solver = SCAFPOptimizer(
+        config=solver_cfg,
+        M=sim_cfg["num_uavs"], K=sim_cfg["num_users"], T=sim_cfg["num_targets"],
+        N_t=sim_cfg["num_antennas_tx"],
+        N_r=sim_cfg.get("num_antennas_rx", sim_cfg["num_antennas_tx"]),
+        carrier_freq_ghz=sim_cfg["carrier_freq_ghz"],
+        area_size=tuple(sim_cfg["area_size"]),
+        altitude_range=(sim_cfg["altitude_min_m"], sim_cfg["altitude_max_m"]),
+        p_max=10 ** ((sim_cfg["p_max_dbm"] - 30) / 10),
+        noise_power=noise_power,
+        load_cap=sim_cfg["load_cap_per_uav"],
+    )
+
+    scenario_gen = ISACScenarioGenerator(
+        num_uavs=sim_cfg["num_uavs"],
+        num_users=sim_cfg["num_users"],
+        num_targets=sim_cfg["num_targets"],
+        area_size=tuple(sim_cfg["area_size"]),
+        carrier_freq_ghz=sim_cfg["carrier_freq_ghz"],
+        bandwidth_mhz=sim_cfg["bandwidth_mhz"],
+        num_antennas=sim_cfg["num_antennas_tx"],
+        p_max_dbm=sim_cfg["p_max_dbm"],
+        seed=999,
+    )
+
+    speedups = []
+    warm_iters_list = []
+    cold_iters_list = []
+
+    for idx in tqdm(range(n_scafp), desc="SCA-FP eval"):
+        seed = 900 + idx
+        env = scenario_gen.sample(seed)
+        prompt = build_full_prompt(env, sim_cfg)
+        q = torch.tensor(env.q_current, dtype=torch.float32)
+
+        ws = model.generate_warmstart(prompt, q_current=q.clone())
+
+        env_dict = {
+            "q_current": env.q_current,
+            "user_positions": env.u_positions,
+            "target_positions": env.s_positions,
+            "channel_gains": env.channel_gains_users,
+            "user_weights": env.user_weights.copy(),
+            "association": env.association,
+        }
+
+        warm_start_dict = {
+            "delta_q": ws["delta_q"].numpy(),
+            "delta_a": ws["delta_a"].numpy(),
+            "delta_p": ws["delta_p"].numpy(),
+        }
+
+        sol_warm = solver.solve(env_dict, warm_start=warm_start_dict, seed=seed)
+        sol_cold = solver.solve(env_dict, warm_start=None, seed=seed)
+
+        speedup = sol_cold.iterations / max(sol_warm.iterations, 1)
+        speedups.append(speedup)
+        warm_iters_list.append(sol_warm.iterations)
+        cold_iters_list.append(sol_cold.iterations)
+
+    speedups_arr = np.array(speedups)
+    warm_arr = np.array(warm_iters_list)
+    cold_arr = np.array(cold_iters_list)
+
+    print(f"\n  Warmstart iterations:   {warm_arr.mean():.1f} ± {warm_arr.std():.1f}")
+    print(f"  Cold-start iterations:  {cold_arr.mean():.1f} ± {cold_arr.std():.1f}")
+    print(f"  SCA-FP Speedup:         {speedups_arr.mean():.3f}x ± {speedups_arr.std():.3f}")
+    print(f"  Min/Max speedup:        {speedups_arr.min():.3f}x / {speedups_arr.max():.3f}x")
+    print(f"  Speedup ≥ 1.5×:         {(speedups_arr >= 1.5).sum()}/{n_scafp} samples ({(speedups_arr >= 1.5).mean()*100:.1f}%)")
+    print(f"  Warmstart ≤ 1 iter (possible collapse): {(warm_arr <= 1).sum()}/{n_scafp} samples")
 
     print(f"\n{'='*72}")
     print("Eval complete. Key questions to answer:")
