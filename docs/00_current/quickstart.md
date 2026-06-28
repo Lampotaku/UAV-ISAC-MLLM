@@ -10,6 +10,8 @@ related: [canonical_config, status, hardware_adaptation]
 
 **目标受众**: 刚接手项目的工程师，需要在服务器上跑起来。
 
+> 📋 **第一次接触项目？先读 [handoff.md](handoff.md)** — 包含当前状态、blocker、OOM 历史和禁忌清单。
+
 **预计时间**: 15 分钟 (不含数据生成和训练时间)
 
 ## 前置条件

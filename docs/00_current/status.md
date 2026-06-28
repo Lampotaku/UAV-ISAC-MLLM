@@ -10,6 +10,8 @@ related: [phase1_status_2026-06-26, handoff_2026-06-26, talk, oom_incidents]
 
 **最后更新**: 2026-06-28 | **阶段**: 代码就绪，等待服务器重跑 → SCA-FP 批量评估 → 决策
 
+> 📋 **接手此项目的工程师请先阅读 [handoff.md](handoff.md)** — 一次性包含所有你需要的上下文。
+
 ## 概述
 
 UAV-ISAC-MLLM：用 Gemma 3 12B (LoRA + 约束投影头) 为 SCA-FP 数值优化器提供智能 warmstart。
@@ -133,7 +135,7 @@ Control Hidden States [B, 8, 3840]
 | Plan A：纯 PyTorch CE + SDPA | ✅ |
 | 根因 1：梯度密度失衡 → Attention Pooling | ✅ |
 | 根因 2：单 Query 出口瓶颈 → Multi-Query | ✅ |
-| OOM #6 (Phase 1 Phase 2 切换双模型) | ⚠️ 未验证 |
+| OOM #6 (Phase 2 切换) | ⚠️ 修复已推送 (7f8bc54) — KeyError 权重重绑 + gc 硬加固，**待服务器验证** |
 | Phase 1 checkpoint 保存 | ✅ (commit `910d967`) |
 | MSE 收缩效应确诊 | ✅ |
 
