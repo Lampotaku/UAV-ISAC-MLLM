@@ -29,7 +29,11 @@ def main():
     print("=" * 60)
 
     # 1. Initialize solver with ground clutter penalty
-    cfg = SCAFPConfig(ground_clutter_db=12.0)
+    cfg = SCAFPConfig(
+        ground_clutter_db=12.0,
+        max_iters=100,
+        lambda_repel=0.01,
+    )
     solver = SCAFPOptimizer(
         cfg, M=4, K=20, T=6, N_t=8,
         carrier_freq_ghz=5.8,
@@ -55,17 +59,22 @@ def main():
     start_time = time.time()
 
     for i in range(n_envs):
-        env = gen.sample(i)
+        env_sample = gen.sample(i)
+
+        # 构造 solver 期望的 dict 格式
+        env_dict = {
+            "q_current": env_sample.q_current.copy(),
+            "user_positions": env_sample.u_positions.copy(),
+            "target_positions": env_sample.s_positions.copy(),
+            "channel_gains": env_sample.channel_gains_users.copy(),
+            "user_weights": env_sample.user_weights.copy().astype(np.float32),
+            "association": env_sample.association.copy(),
+        }
 
         try:
-            sol = solver.solve(
-                q_current=env['q'],
-                users=env['user_locs'],
-                targets=env['target_locs'],
-                warm_start=None,
-            )
+            sol = solver.solve(env_dict, warm_start=None, seed=i)
 
-            dq = sol['q'] - env['q']  # (N_uav, 3)
+            dq = sol.Q - env_dict["q_current"]  # (N_uav, 3)
             delta_q_list.append(dq)
 
         except Exception as e:

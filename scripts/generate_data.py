@@ -107,6 +107,14 @@ def main():
                         help="Save checkpoint every N environments (also batch size in multiprocessing)")
     parser.add_argument("--workers", type=int, default=0,
                         help="Worker processes: 0=sequential, -1=auto (cpu-2), N=explicit")
+    parser.add_argument("--snapback-epsilon", type=float, default=1.5,
+                        help="Perturbation magnitude for snap-back test (meters, default: 1.5)")
+    parser.add_argument("--snapback-top-k", type=int, default=3,
+                        help="Top-K candidates for snap-back test (default: 3)")
+    parser.add_argument("--pareto-utility-ratio", type=float, default=0.95,
+                        help="Discard solutions below this ratio of max utility (default: 0.95)")
+    parser.add_argument("--heuristic-reject-ratio", type=float, default=0.3,
+                        help="Fraction of heuristic trap rejected samples (default: 0.3)")
     args = parser.parse_args()
 
     # ── 确定并发数 ──
@@ -182,6 +190,7 @@ def main():
     )
 
     solver_config = SCAFPConfig(
+        max_iters=100,                     # 安全帽: snap-back 重跑最多 100 步
         max_outer_iters=30,
         max_inner_iters=50,
         tol=1e-4,
@@ -189,6 +198,8 @@ def main():
         lambda_idle_penalty=5.0,
         sinr_c_min=10 ** (sim_cfg["sinr_c_min_db"] / 10),
         sinr_s_min=10 ** (sim_cfg["sinr_s_min_db"] / 10),
+        ground_clutter_db=12.0,            # ★ 地面杂波 — 数据多样性核心
+        lambda_repel=0.01,                 # ★ 空间互斥力 — 防止 UAV 扎堆
         verbose=False,
     )
 
@@ -212,7 +223,14 @@ def main():
     generator = OracleDataGenerator(
         scenario_gen=scenario_gen,
         solver=solver,
-        config={**data_cfg, "output_dir": output_dir},
+        config={
+            **data_cfg,
+            "output_dir": output_dir,
+            "snapback_epsilon": args.snapback_epsilon,
+            "snapback_top_k": args.snapback_top_k,
+            "pareto_utility_ratio": args.pareto_utility_ratio,
+            "heuristic_reject_ratio": args.heuristic_reject_ratio,
+        },
         sim_config=sim_cfg,
     )
 

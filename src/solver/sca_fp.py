@@ -33,14 +33,17 @@ from scipy.optimize import minimize, linear_sum_assignment
 @dataclass
 class SCAFPConfig:
     """SCA-FP 求解器配置"""
-    max_outer_iters: int = 30         # 最大外循环迭代
+    max_outer_iters: int = 30         # 最大外循环迭代 (保留向后兼容)
     max_inner_iters: int = 50         # SCA 内循环 (部署子问题)
+    max_iters: int = 100              # 硬上限 — 迭代次数安全帽, 覆盖 max_outer_iters
     tol: float = 1e-4                 # 收敛容差
     lambda_sensing: float = 0.5       # λ_s — 感知权重
     lambda_idle_penalty: float = 5.0  # λ_f — 闲置 UAV 惩罚
     sinr_c_min: float = 1.0           # Γ_c^min (线性, 0dB)
     sinr_s_min: float = 10.0          # Γ_s^min (线性, 10dB)
     ground_clutter_db: float = 12.0   # 地面杂波 (dB) — H_min 处额外损耗, H_max 处为 0
+    lambda_repel: float = 0.01        # 多 UAV 空间互斥力权重 (0 = 禁用)
+    epsilon_min_repel: float = 1e-6   # 互斥力分母数值地板
     verbose: bool = False
 
 
@@ -142,8 +145,9 @@ class SCAFPOptimizer:
             Q, A, P_comm, P_sense = self._random_init(environment)
 
         prev_utility = -np.inf
+        max_iters = self.cfg.max_iters if self.cfg.max_iters > 0 else self.cfg.max_outer_iters
 
-        for outer_iter in range(self.cfg.max_outer_iters):
+        for outer_iter in range(max_iters):
             # Step 1: 固定 Q, A → 优化波束功率
             P_comm, P_sense = self._optimize_beamforming(
                 Q, A, gains_comm, target_positions
@@ -183,7 +187,7 @@ class SCAFPOptimizer:
             W_s_power=P_sense,
             utility=utility if np.isfinite(utility) else -np.inf,
             iterations=outer_iter + 1,
-            converged=(outer_iter + 1 < self.cfg.max_outer_iters) and np.isfinite(utility),
+            converged=(outer_iter + 1 < max_iters) and np.isfinite(utility),
             solve_time=elapsed,
         )
 
@@ -406,6 +410,15 @@ class SCAFPOptimizer:
                     if dist_moved > max_disp:
                         obj += 1e5 * (dist_moved - max_disp) ** 2
 
+                    # 多 UAV 空间互斥力 — 防止扎堆到同一"避风港"
+                    # Penalty ∝ 1/d², 随距离自动衰减, 无需手动阈值
+                    if self.cfg.lambda_repel > 0:
+                        for other_m in range(self.M):
+                            if other_m == m:
+                                continue
+                            dist_sq = np.sum((q_new - Q[other_m, :]) ** 2)
+                            obj += self.cfg.lambda_repel / max(dist_sq, self.cfg.epsilon_min_repel)
+
                     return obj
 
                 # L-BFGS-B 优化 m-th UAV
@@ -534,6 +547,14 @@ class SCAFPOptimizer:
         for m in range(self.M):
             if A[m].sum() < 0.5:
                 utility -= self.cfg.lambda_idle_penalty
+
+        # 多 UAV 空间互斥力 — 与 _optimize_deployment_sca 中的惩罚对应
+        if getattr(self.cfg, 'lambda_repel', 0.0) > 0:
+            eps_min = getattr(self.cfg, 'epsilon_min_repel', 1e-6)
+            for i in range(self.M):
+                for j in range(i + 1, self.M):
+                    dist_sq = np.sum((Q[i] - Q[j]) ** 2)
+                    utility -= self.cfg.lambda_repel / max(dist_sq, eps_min)
 
         return float(utility)
 
