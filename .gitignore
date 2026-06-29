@@ -43,3 +43,4 @@ Thumbs.db
 .env
 *.secret
 论文.txt
+docs/talk.md

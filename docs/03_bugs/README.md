@@ -29,14 +29,17 @@ last_updated: 2026-06-26
 | 7 | TensorBoard 日志静默丢失 (缺失 init_trackers) | P1 | sft | [tensorboard_init_trackers.md](resolved/tensorboard_init_trackers.md) |
 | 8 | Eval Pipeline 审查 — 7 处缺陷闭合 (tqdm/CPU/加速比) | P0 | eval | [eval_pipeline_7_bugs.md](resolved/eval_pipeline_7_bugs.md) |
 | 9 | Checkpoint 4GB→100MB (modules_to_save 完整权重保存) | P0 | sft/eval | [checkpoint_modules_to_save_4gb.md](resolved/checkpoint_modules_to_save_4gb.md) |
+| 10 | OOM #6-7 (Phase 2 切换泄漏 + Grad diag retain_graph) | P0 | sft | 详见 [oom_incidents.md](../02_training_log/oom_incidents.md) |
+| 11 | SFT 模态坍塌 — 数据退化 (求解器无高度 trade-off) | P0 | datagen | [data_degeneracy.md](../02_training_log/data_degeneracy.md) |
 
-**全部 P0/P1 bug 已解决。**
+**全部 P0/P1 bug 已解决。** 详见各阶段 postmortem。
 
 ## 开放 Issues
 
 | # | Issue | 严重度 | 阶段 | 文件 |
 |---|-------|--------|------|------|
 | 1 | 验证缺口审计 (20 项) | P0-P2 | all | [verification_gaps.md](open/verification_gaps.md) |
+| 2 | DPO 在新数据上的表现待验证 | P0 | dpo | [adr_006](../06_decisions/adr_006_data_regeneration.md) |
 
 ## 如何登记新 Bug
 

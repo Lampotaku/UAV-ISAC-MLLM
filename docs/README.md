@@ -1,8 +1,8 @@
 ---
 type: reference
 status: current
-stage: sft
-last_updated: 2026-06-26
+stage: data_regeneration
+last_updated: 2026-06-29
 ---
 
 # UAV-ISAC-MLLM — Documentation
@@ -15,8 +15,8 @@ last_updated: 2026-06-26
 
 | 顺序 | 文档 | 时间 | 内容 |
 |------|------|------|------|
-| **1** | [00_current/status.md](00_current/status.md) | **3 min** | 项目当前状态：SFT 训练到哪了？有什么 blocker？ |
-| **2** | [00_current/quickstart.md](00_current/quickstart.md) | **10 min** | 从零开始在服务器上跑起来 |
+| **1** | [00_current/status.md](00_current/status.md) | **3 min** | 项目当前状态：数据层大修，求解器修复，等待数据重生 |
+| **2** | [00_current/quickstart.md](00_current/quickstart.md) | **10 min** | 从零开始在服务器上跑起来（含验证步骤） |
 | **3** | [00_current/canonical_config.md](00_current/canonical_config.md) | **5 min** | 当前 blessed 配置和 pipeline 命令 |
 | **4** | [01_architecture/problem_formulation.md](01_architecture/problem_formulation.md) | **10 min** | 我们到底在解决什么问题？数学框架 |
 | **5** | [01_architecture/system_design.md](01_architecture/system_design.md) | **10 min** | 模块拓扑、数据流、接口契约 |
@@ -41,10 +41,11 @@ docs/
 │   └── hardware_adaptation.md         Blackwell RTX PRO 6000 特定方案
 │
 ├── 02_training_log/                   训练纪实
-│   ├── sft_live.md                    当前 SFT 运行指标和配置
-│   ├── oom_incidents.md               OOM 1-5 诊断全链
+│   ├── sft_live.md                    SFT 训练指标和配置 (旧数据，已废弃)
+│   ├── oom_incidents.md               OOM 1-7 诊断全链 ⭐
+│   ├── data_degeneracy.md             数据退化根因分析 + 求解器修复 ⭐
 │   ├── speed_optimization.md          21s→2.5s/step 提速战
-│   └── phase1_status_2026-06-26.md    Phase 1 控制表示学习调试全纪录
+│   └── phase1_status_2026-06-26.md   Phase 1 控制表示学习调试全纪录
 │
 ├── 03_bugs/                           Bug 注册中心
 │   ├── README.md                      严重度定义、如何登记
@@ -66,7 +67,8 @@ docs/
 │   ├── adr_002_dpo_independent_ref.md
 │   ├── adr_003_sdpa_canonical.md
 │   ├── adr_004_4bit_qlora_blackwell.md
-│   └── adr_005_control_token_mechanism.md
+│   ├── adr_005_control_token_mechanism.md
+│   └── adr_006_data_regeneration.md   ★ 数据重生 + DPO 路线
 │
 ├── 07_conventions/                    文档维护规范
 │   ├── naming_conventions.md

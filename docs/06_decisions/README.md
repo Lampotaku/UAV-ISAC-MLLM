@@ -16,6 +16,7 @@ last_updated: 2026-06-26
 | [003](adr_003_sdpa_canonical.md) | SDPA as Canonical Attention | Accepted | 2026-06-26 |
 | [004](adr_004_4bit_qlora_blackwell.md) | bf16 Full Precision on RTX PRO 6000 (No Quantization) | Accepted | 2026-06-23 |
 | [005](adr_005_control_token_mechanism.md) | Control Token Design | Accepted | 2026-06-23 |
+| [006](adr_006_data_regeneration.md) | Data Regeneration + DPO Strategy | Accepted | 2026-06-29 |
 
 ## 格式
 
