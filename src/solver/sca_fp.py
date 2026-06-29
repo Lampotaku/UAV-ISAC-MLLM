@@ -40,6 +40,7 @@ class SCAFPConfig:
     lambda_idle_penalty: float = 5.0  # λ_f — 闲置 UAV 惩罚
     sinr_c_min: float = 1.0           # Γ_c^min (线性, 0dB)
     sinr_s_min: float = 10.0          # Γ_s^min (线性, 10dB)
+    ground_clutter_db: float = 12.0   # 地面杂波 (dB) — H_min 处额外损耗, H_max 处为 0
     verbose: bool = False
 
 
@@ -366,6 +367,9 @@ class SCAFPOptimizer:
                     q_new = np.array([x[0], x[1], x[2]])
                     # 通信项: -Σ_k A_{m,k} log₂(1 + γ_{m,k})
                     obj_comm = 0.0
+                    # 地面杂波: 低飞时额外的障碍物损耗 (建筑物/树木)
+                    h_norm = max(0.0, min(1.0, (q_new[2] - self.H_min) / (self.H_max - self.H_min)))
+                    clutter_db = self.cfg.ground_clutter_db * (1.0 - h_norm)
                     for k in range(self.K):
                         if A[m, k] < 0.5:
                             continue
@@ -373,6 +377,7 @@ class SCAFPOptimizer:
                         dist_3d = np.sqrt(dist_2d ** 2 + q_new[2] ** 2)
                         # 3GPP UMa LoS: PL = 28 + 22*log10(d_3D) + 20*log10(f_c)
                         pl_db = 28 + 22 * np.log10(max(dist_3d, 1.0)) + 20 * np.log10(self.carrier_freq_ghz)
+                        pl_db += clutter_db  # 地面杂波附加损耗
                         pl_linear = 10 ** (-pl_db / 10)
                         sinr = P_comm[m, k] * pl_linear / self.N0
                         obj_comm -= np.log2(1 + sinr)
@@ -384,6 +389,7 @@ class SCAFPOptimizer:
                         dist_2d = np.linalg.norm(q_new[:2] - t_pos)
                         dist_3d = np.sqrt(dist_2d ** 2 + q_new[2] ** 2)
                         pl_db = 20 * np.log10((4 * np.pi * max(dist_3d, 1.0)) / self.wavelength) + 20
+                        pl_db += clutter_db  # 地面杂波附加损耗
                         pl_linear = 10 ** (-pl_db / 10)
                         sinr_s = P_sense[m] * pl_linear * self.N_t * self.N_r / self.N0
                         obj_sense -= sinr_s
