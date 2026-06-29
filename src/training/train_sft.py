@@ -573,7 +573,7 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None, resume_from: 
                             for g in _grads_sft if g is not None
                         ) ** 0.5
                         _grads_ctl = torch.autograd.grad(
-                            _scaled_ctl, lora_params, retain_graph=False, allow_unused=True
+                            _scaled_ctl, lora_params, retain_graph=True, allow_unused=True
                         )
                         _gn_ctl = sum(
                             g.detach().norm().item() ** 2
