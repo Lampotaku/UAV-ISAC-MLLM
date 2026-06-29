@@ -632,10 +632,14 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None, resume_from: 
                         f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}"
                         for k, v in metrics.items()
                     )
+                    _d = progress.format_dict
+                    _elapsed = _d.get("elapsed", 0)
+                    _rate = _d.get("rate") or 1e-8
+                    _remaining = (_d.get("total", 1) - _d.get("n", 0)) / _rate
                     progress.write(
-                        f"{global_step}/{progress.total} "
-                        f"[{progress.format_dict['elapsed']:.0f}s<{progress.format_dict['remaining']:.0f}s, "
-                        f"{progress.format_dict['rate']:.2f}it/s, {_metrics_str}]"
+                        f"{global_step}/{_d.get('total', '?')} "
+                        f"[{_elapsed:.0f}s<{_remaining:.0f}s, "
+                        f"{_rate:.2f}it/s, {_metrics_str}]"
                     )
                     accelerator.log(metrics, step=global_step)
 
