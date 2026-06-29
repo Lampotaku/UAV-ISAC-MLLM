@@ -61,6 +61,8 @@ docs/
 │   ├── README.md                      结果时间线
 │   └── final_validation.md            最终 5k SFT + 187k DPO 验证
 │
+├── CONTEXT.md                         ★ 领域词汇表 (11 个精确定义的术语, Grilling 产出)
+│
 ├── 06_decisions/                      架构决策记录 (ADR)
 │   ├── README.md                      ADR 索引
 │   ├── adr_001_unsloth_removal.md     ★ 最重要的决策
@@ -68,7 +70,7 @@ docs/
 │   ├── adr_003_sdpa_canonical.md
 │   ├── adr_004_4bit_qlora_blackwell.md
 │   ├── adr_005_control_token_mechanism.md
-│   └── adr_006_data_regeneration.md   ★ 数据重生 + DPO 路线
+│   └── adr_006_data_regeneration.md   ★ 数据重生 + DPO 路线 (5轮Grilling终稿)
 │
 ├── 07_conventions/                    文档维护规范
 │   ├── naming_conventions.md

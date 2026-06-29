@@ -3,7 +3,7 @@ type: status
 status: current
 stage: data_regeneration
 last_updated: 2026-06-29
-related: [data_degeneracy, oom_incidents, adr_006_data_regeneration, modality_collapse]
+related: [data_degeneracy, oom_incidents, adr_006_data_regeneration, CONTEXT.md]
 ---
 
 # 项目当前状态
@@ -134,55 +134,65 @@ SCAFPConfig.ground_clutter_db: 0.0 → 12.0  (commit f34129c)
 | Phase 1 checkpoint 保存 (step 150 最佳) | ✅ |
 | MSE 收缩效应确诊 | ✅ |
 | DPO 旧数据训练已停止 | ✅ |
+| 5 轮领域模型火烤 (Grilling) | ✅ — 10 个术语精确定义, 3 条错误路线拍死, CONTEXT.md 建立 |
 
-## ⏭️ 下一步行动
+## ⏭️ 下一步行动 (2026-06-29 Grilling 终稿)
 
-### 步骤 1：快速验证求解器修复 (5 min)
+### 步骤 0：ε 标定 — Pilot Sweep (5 min)
+
+在全量数据前，先跑微扰步长标定。ε 决定了微扰回弹测试测的是"盆地内壁"还是"跨山脊"。
 
 ```bash
 cd /root/UAV-ISAC-MLLM && git pull
 conda activate uavmllm
+python scripts/calibrate_epsilon.py
+```
+
+对 50 个环境测试 ε ∈ {0.5, 1.0, 2.0, 4.0, 8.0}m，选回弹步数区分度最大的值。预期最佳：1.0-2.5m。
+
+### 步骤 1：快速验证求解器修复 (2 min)
+
+```bash
 python scripts/quick_validate_fix.py
 ```
 
-**验收标准**：
-- 满速飞行比例 < 40%（原 84.7%）
-- 精细微调 (<5m) 比例 > 10%（原 0%）
-- 上升比例 > 15%（原 0%）—— 核心指标，证明杂波迫使 UAV 爬升
+验收标准：满速 < 40%，微调 > 10%，**上升 > 15%（红线）**。
 
-### 步骤 2：全量数据重生 (~3.5h, 70 workers)
+### 步骤 2：全量数据暴力生成 (~2-3h, 70 workers)
+
+**注意：生成 20,000 环境（非 5,000），后续 Top-K 精选 5,000。**
+
+每个环境执行：10 次 Random Restart → Pareto 过滤 → Top-3 候选 → 微扰回弹测试 → Chosen/Rejected 构造。所有 Rejected 经 `clip_to_physics_bounds` 约束投影。
 
 ```bash
 python scripts/generate_data.py \
-    --num-envs 5000 --num-restarts 10 \
-    --output-dir /root/autodl-tmp/data/full5000_v2 \
+    --num-envs 20000 --num-restarts 10 \
+    --output-dir /root/autodl-tmp/data/full20000_v2 \
     --num-workers 70
 ```
 
-### 步骤 3：EDA 验收
+### 步骤 3：质量闸门 → Top-5000 精选
+
+按 Chosen-Rejected Composite Score Gap 排序，取前 5,000 名。
 
 ```bash
-python scripts/eda_data.py --data-dir /root/autodl-tmp/data/full5000_v2
+python scripts/eda_data.py --data-dir /root/autodl-tmp/data/full20000_v2
 ```
 
-确认多样性指标通过后再进入训练。
+EDA Section 3 三条红线全部通过后才进入训练。
 
-### 步骤 4：DPO 重训（非 SFT）
+### 步骤 4：Masked DPO 训练 (~5-10h)
 
-**为什么跳过 SFT 直接 DPO**：
-- Step 150 的 SFT checkpoint 已具备 JSON 生成能力（loss_sft 正常）
-- SFT（Teacher Forcing）对连续物理量的学习有硬天花板——CE loss 认为预测 5.1 和 5.2 跟预测"猫"和"狗"一样错误
-- DPO 是**对比学习**——比较 chosen vs rejected，天然适合学习"哪种位移更优"的相对排序
-- 且新数据的 preference pairs 来自 ground-clutter solver 的 Best-of-N，chosen 不再是"砸地板"
+在 `dataset.py` 中实施 token-span-level masking：JSON 中 δ_a 和 δ_p 对应 token 的 label 设为 `-100`，DPO 自动跳过。梯度只集中在 δ_q 的偏好拉扯上。
 
 ```bash
 python src/training/train_dpo.py \
     --config configs/default.yaml \
     --stage1_ckpt /root/autodl-tmp/checkpoints/stage1_step_150 \
-    --data_dir /root/autodl-tmp/data/full5000_v2
+    --data_dir /root/autodl-tmp/data/full20000_v2
 ```
 
-**预期 VRAM**: ~65-75 GB / 96 GB (bs=1, 双模型)
+预期 VRAM: ~65-75 GB / 96 GB (bs=1, 双模型)。
 
 ### 步骤 5：评估
 

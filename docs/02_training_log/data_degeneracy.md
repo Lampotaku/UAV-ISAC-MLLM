@@ -179,6 +179,31 @@ python scripts/quick_validate_fix.py
 
 验收标准：向上飞比例破冰（>15%），满速比例跌破 50%，精细微调出现（>10%）。
 
+## 🔬 后续：DPO 数据生成策略 (Grilling 终稿)
+
+数据重生不仅仅是更换 solver 参数。经过 5 轮领域模型火烤，完整的 DPO 数据生成流程已锁死。详见 [ADR 006](../06_decisions/adr_006_data_regeneration.md)。
+
+关键要点：
+
+1. **微扰回弹测试选 Chosen**：不迷信 Sum-Rate 最高的局部最优。统一施加 ε 扰动后重跑 SCA-FP，步数最少者当选——确保选的是"宽盆地"而非"窄深谷"。
+
+2. **Masked DPO**：DPO 操作在文本 token log-probabilities 上。在 `dataset.py` 中将 JSON 里 δ_a/δ_p 对应 token 的 label 设为 `-100`，梯度集中在 δ_q 的偏好拉扯上。
+
+3. **Top-K 精选**：生成 20,000 环境（非 5,000），按 Chosen-Rejected Gap 排序取前 5,000 名。预估存活率 25-35%。
+
+4. **所有 Rejected 必经 Constraint Projections**：启发式陷阱（短视直线、原地不动、旧世界残影）必须通过 `clip_to_physics_bounds` 投影，确保是模型输出空间中的合法点。
+| 满功率 (≈1.0W) | 84.3% | < 50% |
+
+## 🧪 快速验证
+
+```bash
+cd /root/UAV-ISAC-MLLM && git pull
+conda activate uavmllm
+python scripts/quick_validate_fix.py
+```
+
+验收标准：向上飞比例破冰（>15%），满速比例跌破 50%，精细微调出现（>10%）。
+
 ## 为什么 SFT 在这个退化数据上注定失败？
 
 ### 数学分析
