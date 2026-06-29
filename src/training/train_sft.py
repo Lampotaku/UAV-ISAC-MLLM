@@ -449,10 +449,10 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None, resume_from: 
                     phase1_sensitivity = _check_cross_env_sensitivity(
                         _raw_model, _sens_prompt_a, _sens_q_a, _sens_prompt_b, _sens_q_b
                     )
-                    phase1_pbar.set_postfix({
-                        "loss_ctl": f"{metrics['loss_ctl']:.2f}",
-                        "sens": f"{phase1_sensitivity:.4f}",
-                    })
+                    phase1_pbar.write(
+                        f"step {phase1_step}: loss_ctl={metrics['loss_ctl']:.2f}, "
+                        f"sens={phase1_sensitivity:.4f}"
+                    )
                     accelerator.log({
                         "phase1/loss_ctl": metrics["loss_ctl"],
                         "phase1/sensitivity": phase1_sensitivity,
@@ -628,7 +628,15 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None, resume_from: 
 
                 # 日志
                 if global_step % train_cfg["logging_steps"] == 0:
-                    progress.set_postfix(metrics)
+                    _metrics_str = "  ".join(
+                        f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}"
+                        for k, v in metrics.items()
+                    )
+                    progress.write(
+                        f"{global_step}/{progress.total} "
+                        f"[{progress.format_dict['elapsed']:.0f}s<{progress.format_dict['remaining']:.0f}s, "
+                        f"{progress.format_dict['rate']:.2f}it/s, {_metrics_str}]"
+                    )
                     accelerator.log(metrics, step=global_step)
 
                 # 保存 checkpoint

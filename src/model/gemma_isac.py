@@ -399,6 +399,11 @@ class Gemma3ISAC(nn.Module):
         peft_cfg = self.base_model.peft_config["default"]
         cfg_dict = peft_cfg.to_dict()
         cfg_dict.pop("modules_to_save", None)
+        # PEFT 内部会把 target_modules 从 list 转成 set 以加速查找，
+        # 但 set 不是 JSON 可序列化的 → 遍历所有值，遇到 set 转回 list。
+        for _k, _v in cfg_dict.items():
+            if isinstance(_v, set):
+                cfg_dict[_k] = sorted(_v)
         with open(os.path.join(lora_dir, "adapter_config.json"), "w") as f:
             json.dump(cfg_dict, f, indent=2)
 
