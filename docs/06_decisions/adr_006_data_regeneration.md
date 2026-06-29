@@ -4,7 +4,7 @@ status: Accepted
 stage: all
 date: 2026-06-29
 last_updated: 2026-06-29
-commits: [f34129c]
+commits: [f34129c, 7cedb02]
 related: [adr_001_unsloth_removal, adr_002_dpo_independent_ref, data_degeneracy, status, CONTEXT.md]
 grilling_rounds: 5
 ---
@@ -163,16 +163,24 @@ Penalty_repel = λ_repel × Σ_i Σ_{j>i} 1 / max(||q_i - q_j||², ε_min)
 2026-06-29  09:00  EDA 确诊数据退化 → solver 修复 (ground_clutter_db)
 2026-06-29  10:00  5 轮 Grilling 火烤 → 消除所有语义模糊
 2026-06-29  11:00  ADR 006 终稿 → 决策锁死
+2026-06-29  14:00  代码落地 (commit 7cedb02) — 6 文件, +752/-84 行
+           ├── sca_fp.py (max_iters + lambda_repel)
+           ├── oracle_generator.py (snap-back + Rejected 混合 + clip 投影)
+           ├── dataset.py (Masked DPO token-span -100)
+           ├── generate_data.py (ground_clutter_db + snapback CLI)
+           ├── calibrate_epsilon.py (NEW 294 行)
+           └── quick_validate_fix.py (修复 solve 签名)
+2026-06-29  14:30  自检审查 → 3 个 bug 现场斩杀
            ↓
-NOW        ⏳ ε-Calibration (50 envs, 5 min)
+NOW        ⏳ 服务器: ε-Calibration (50 envs, 5 min)
            ↓
-           全量数据生成 20,000 envs (~2-3h)
+           服务器: 全量数据生成 20,000 envs (~2-3h)
            ↓
-           质量闸门 → Top-5000 精选
+           服务器: 质量闸门 → Top-5000 精选
            ↓
-           EDA 验收 (红线检查)
+           服务器: EDA 验收 (红线检查)
            ↓
-           Masked DPO 训练 (~5-10h)
+           服务器: Masked DPO 训练 (~5-10h)
            ↓
-           评估 → 若不达标 → P0→P1→P2 逐级出牌
+           服务器: 评估 → 若不达标 → P0→P1→P2 逐级出牌
 ```

@@ -2,7 +2,7 @@
 type: reference
 status: current
 stage: all
-last_updated: 2026-06-26
+last_updated: 2026-06-29
 ---
 
 # Bug Registry
@@ -31,6 +31,7 @@ last_updated: 2026-06-26
 | 9 | Checkpoint 4GB→100MB (modules_to_save 完整权重保存) | P0 | sft/eval | [checkpoint_modules_to_save_4gb.md](resolved/checkpoint_modules_to_save_4gb.md) |
 | 10 | OOM #6-7 (Phase 2 切换泄漏 + Grad diag retain_graph) | P0 | sft | 详见 [oom_incidents.md](../02_training_log/oom_incidents.md) |
 | 11 | SFT 模态坍塌 — 数据退化 (求解器无高度 trade-off) | P0 | datagen | [data_degeneracy.md](../02_training_log/data_degeneracy.md) |
+| 12 | 代码审查 3 连杀 (converged/max_iters 错引, 额外 SCA-FP 调用, calibrate baseline 错误) | P1 | sft/datagen | [implementation_2026-06-29.md](../02_training_log/implementation_2026-06-29.md) |
 
 **全部 P0/P1 bug 已解决。** 详见各阶段 postmortem。
 

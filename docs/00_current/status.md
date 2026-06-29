@@ -1,14 +1,14 @@
 ---
 type: status
 status: current
-stage: data_regeneration
+stage: code_complete
 last_updated: 2026-06-29
-related: [data_degeneracy, oom_incidents, adr_006_data_regeneration, CONTEXT.md]
+related: [data_degeneracy, oom_incidents, adr_006_data_regeneration, CONTEXT.md, implementation_2026-06-29]
 ---
 
 # 项目当前状态
 
-**最后更新**: 2026-06-29 | **阶段**: ⚠️ 数据层大修 — SFT 诊断出根因 → 求解器修复 → 等待数据重生
+**最后更新**: 2026-06-29 | **阶段**: ✅ 代码落地 — Grilling 终稿全线实现 → 等待服务器执行
 
 ## 🔴 核心发现：数据退化 — 项目最致命的阿喀琉斯之踵
 
@@ -135,6 +135,30 @@ SCAFPConfig.ground_clutter_db: 0.0 → 12.0  (commit f34129c)
 | MSE 收缩效应确诊 | ✅ |
 | DPO 旧数据训练已停止 | ✅ |
 | 5 轮领域模型火烤 (Grilling) | ✅ — 10 个术语精确定义, 3 条错误路线拍死, CONTEXT.md 建立 |
+| **Grilling 终稿代码落地 (commit `7cedb02`)** | ✅ — 6 文件, +752/-84 行 |
+
+## 🏗️ 代码落地详情 (2026-06-29, commit `7cedb02`)
+
+### 改造文件
+
+| 文件 | 变更 | 关键内容 |
+|------|------|----------|
+| `src/solver/sca_fp.py` | +27 | `max_iters=100` 安全帽, `lambda_repel=0.01` 空间互斥力, `epsilon_min_repel` |
+| `src/data/oracle_generator.py` | +374/-84 | 核心重写: snap-back 测试, Pareto 过滤, Rejected 混合构造 (70%次优+30%陷阱), `clip_to_physics_bounds` 约束投影, baseline 缓存优化 |
+| `src/data/dataset.py` | +92 | **Masked DPO**: `_find_field_spans_in_json` + token-span 级 label `-100` 遮蔽 δ_a/δ_p |
+| `scripts/generate_data.py` | +20 | `ground_clutter_db=12.0`, `lambda_repel=0.01`, `--snapback-epsilon` 等新 CLI 参数 |
+| `scripts/calibrate_epsilon.py` | **新文件** 294 行 | ε ∈ {0.5,1,2,4,8}m sweep → 方差分析 → 推荐最佳 ε |
+| `scripts/quick_validate_fix.py` | +29 | 修复 `solve()` 调用签名 + 改用 `SCAFPConfig(lambda_repel=0.01)` |
+
+### 审查中斩杀 3 个 Bug
+
+| # | Bug | 位置 | 修复 |
+|---|-----|------|------|
+| 12a | `converged` 仍引用旧 `max_outer_iters` (应引用新 `max_iters`) | sca_fp.py:187 | → 局部变量 `max_iters` |
+| 12b | `_compute_utility_of_delta_q` 每次多跑一次 SCA-FP (×20,000 额外求解) | oracle_generator.py | → 用已有信息估算 gap, 方法删除 |
+| 12c | `calibrate_epsilon._pareto_filter` baseline 用随机重启而非 `[0,0,0]` | calibrate_epsilon.py | → zero warm_start |
+
+详见 [implementation_2026-06-29.md](../02_training_log/implementation_2026-06-29.md)
 
 ## ⏭️ 下一步行动 (2026-06-29 Grilling 终稿)
 
@@ -234,23 +258,27 @@ cd /root/UAV-ISAC-MLLM && git pull
 conda activate uavmllm
 export TORCHINDUCTOR_FLEX_ATTENTION=0
 
-# 第 1 步：快速验证求解器修复
+# 第 0 步：ε 标定 (5 min)
+python scripts/calibrate_epsilon.py
+
+# 第 1 步：快速验证求解器修复 (2 min)
 python scripts/quick_validate_fix.py
 
-# 第 2 步：全量数据重生
+# 第 2 步：全量数据重生 (20,000 环境, ~2-3h)
+# 用第 0 步确定的 ε 替换 <EPSILON>
 python scripts/generate_data.py \
-    --num-envs 5000 --num-restarts 10 \
-    --output-dir /root/autodl-tmp/data/full5000_v2 \
-    --num-workers 70
+    --num-envs 20000 --num-restarts 10 \
+    --snapback-epsilon <EPSILON> --workers 70 \
+    --output-dir /root/autodl-tmp/data/full20000_v2
 
-# 第 3 步：EDA 验收
-python scripts/eda_data.py --data-dir /root/autodl-tmp/data/full5000_v2
+# 第 3 步：EDA 验收 + Top-5000 精选
+python scripts/eda_data.py --data-dir /root/autodl-tmp/data/full20000_v2
 
-# 第 4 步：DPO 重训
+# 第 4 步：Masked DPO 训练 (5-10h)
 python src/training/train_dpo.py \
     --config configs/default.yaml \
     --stage1_ckpt /root/autodl-tmp/checkpoints/stage1_step_150 \
-    --data_dir /root/autodl-tmp/data/full5000_v2
+    --data_dir /root/autodl-tmp/data/full20000_v2
 
 # 第 5 步：评估
 python scripts/eval_generation.py \
