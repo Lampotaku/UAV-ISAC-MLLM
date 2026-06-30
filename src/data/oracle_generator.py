@@ -56,7 +56,7 @@ class OracleDataGenerator:
         # ── 微扰回弹测试参数 ──
         self.snapback_epsilon = config.get("snapback_epsilon", 1.5)        # 微扰幅度 (m)
         self.snapback_top_k = config.get("snapback_top_k", 3)              # 参与回弹测试的候选数
-        self.pareto_utility_ratio = config.get("pareto_utility_ratio", 0.95)  # 低于全局最高 ×ratio 丢弃
+        self.pareto_utility_ratio = config.get("pareto_utility_ratio", 0.85)  # 低于全局最高 ×ratio 丢弃
 
         # ── Rejected 构造参数 ──
         self.heuristic_reject_ratio = config.get("heuristic_reject_ratio", 0.3)  # 启发式陷阱占比
@@ -292,15 +292,12 @@ class OracleDataGenerator:
         perturbed_q[:, 1] = np.clip(perturbed_q[:, 1], 0, self._area_h)
         perturbed_q[:, 2] = np.clip(perturbed_q[:, 2], self._H_min, self._H_max)
 
-        # 构造 warm_start
-        delta_q_perturbed = perturbed_q - q_current
+        # 不传 perfect A/P — 否则 SCA-FP 的 Q 子问题退化为凸优化, 2 步内收敛
+        # 传零初始化 → 迫使求解器在联合空间重新寻优 → 真正测试盆地宽度
         warm_start = {
             "delta_q": delta_q_perturbed,
-            "delta_a": candidate.A.copy(),
-            "delta_p": np.concatenate([
-                candidate.W_c_power,
-                candidate.W_s_power.reshape(-1, 1),
-            ], axis=1),
+            "delta_a": np.zeros((self.solver.M, self.solver.K)),
+            "delta_p": np.zeros((self.solver.M, self.solver.K + 1)),
         }
 
         rerun_sol = self.solver.solve(

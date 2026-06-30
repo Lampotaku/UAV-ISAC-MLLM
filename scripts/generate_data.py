@@ -111,8 +111,8 @@ def main():
                         help="Perturbation magnitude for snap-back test (meters, default: 1.5)")
     parser.add_argument("--snapback-top-k", type=int, default=3,
                         help="Top-K candidates for snap-back test (default: 3)")
-    parser.add_argument("--pareto-utility-ratio", type=float, default=0.95,
-                        help="Discard solutions below this ratio of max utility (default: 0.95)")
+    parser.add_argument("--pareto-utility-ratio", type=float, default=0.85,
+                        help="Discard solutions below this ratio of max utility (default: 0.85)")
     parser.add_argument("--heuristic-reject-ratio", type=float, default=0.3,
                         help="Fraction of heuristic trap rejected samples (default: 0.3)")
     args = parser.parse_args()

@@ -109,7 +109,7 @@ def _compute_baseline_utility(env_dict):
     return zero_sol.utility
 
 
-def _pareto_filter(solutions, baseline_utility, utility_ratio=0.95):
+def _pareto_filter(solutions, baseline_utility, utility_ratio=0.85):
     """Pareto 过滤: 丢弃 utility < baseline 或低于全局最高 × utility_ratio 的解"""
     if not solutions:
         return []
@@ -150,13 +150,12 @@ def _snapback_test(env_dict, candidate_solution, epsilon, seed_offset):
     # 构造 warm_start
     q_current = env_dict["q_current"]
     delta_q_perturbed = perturbed_q - q_current
+    # 不传 perfect A/P — 否则 SCA-FP 的 Q 子问题退化为凸优化, 2 步内收敛
+    # 传零初始化 → 迫使求解器在联合空间重新寻优 → 真正测试盆地宽度
     warm_start = {
         "delta_q": delta_q_perturbed,
-        "delta_a": candidate_solution.A.copy(),
-        "delta_p": np.concatenate([
-            candidate_solution.W_c_power,
-            candidate_solution.W_s_power.reshape(-1, 1),
-        ], axis=1),
+        "delta_a": np.zeros((_worker_solver.M, _worker_solver.K)),
+        "delta_p": np.zeros((_worker_solver.M, _worker_solver.K + 1)),
     }
 
     rerun_sol = _worker_solver.solve(env_dict, warm_start=warm_start, seed=seed_offset + 10000)
