@@ -38,7 +38,7 @@ class SCAFPConfig:
     max_iters: int = 100              # 硬上限 — 迭代次数安全帽, 覆盖 max_outer_iters
     tol: float = 1e-4                 # 收敛容差
     lambda_sensing: float = 0.5       # λ_s — 感知权重
-    lambda_idle_penalty: float = 5.0  # λ_f — 闲置 UAV 惩罚
+    lambda_idle_penalty: float = 0.0  # λ_f — 闲置 UAV 惩罚 (0=允许悬停)
     sinr_c_min: float = 1.0           # Γ_c^min (线性, 0dB)
     sinr_s_min: float = 10.0          # Γ_s^min (线性, 10dB)
     ground_clutter_db: float = 12.0   # 地面杂波 (dB) — H_min 处额外损耗, H_max 处为 0

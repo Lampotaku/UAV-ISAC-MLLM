@@ -238,7 +238,7 @@ def main():
 
     # ── 初始化 solver 配置 (用于 worker 进程) ──
     _WORKER_SOLVER_CFG = SCAFPConfig(
-        ground_clutter_db=12.0,
+        ground_clutter_db=6.0,
         max_iters=100,
         max_outer_iters=30,
         max_inner_iters=50,

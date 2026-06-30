@@ -195,10 +195,10 @@ def main():
         max_inner_iters=50,
         tol=1e-4,
         lambda_sensing=0.5,
-        lambda_idle_penalty=5.0,
+        lambda_idle_penalty=0.0,
         sinr_c_min=10 ** (sim_cfg["sinr_c_min_db"] / 10),
         sinr_s_min=10 ** (sim_cfg["sinr_s_min_db"] / 10),
-        ground_clutter_db=12.0,            # ★ 地面杂波 — 数据多样性核心
+        ground_clutter_db=6.0,             # ★ 地面杂波 — 6dB 甜点 (12dB 过度向上)
         lambda_repel=0.01,                 # ★ 空间互斥力 — 防止 UAV 扎堆
         verbose=False,
     )

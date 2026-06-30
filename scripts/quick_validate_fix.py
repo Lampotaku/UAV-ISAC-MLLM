@@ -30,7 +30,7 @@ def main():
 
     # 1. Initialize solver with ground clutter penalty
     cfg = SCAFPConfig(
-        ground_clutter_db=12.0,
+        ground_clutter_db=6.0,
         max_iters=100,
         lambda_repel=0.01,
     )
