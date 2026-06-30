@@ -114,7 +114,8 @@ def _pareto_filter(solutions, baseline_utility, utility_ratio=0.85):
     if not solutions:
         return []
     max_utility = solutions[0].utility
-    threshold = max_utility * utility_ratio
+    # 用绝对值计算阈值, 完美兼容正负数 utility
+    threshold = max_utility - abs(max_utility) * (1.0 - utility_ratio)
     return [s for s in solutions if s.utility > baseline_utility and s.utility >= threshold]
 
 

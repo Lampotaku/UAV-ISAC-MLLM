@@ -236,7 +236,9 @@ class OracleDataGenerator:
             return []
 
         max_util = solutions[0].utility
-        threshold = max_util * self.pareto_utility_ratio
+        # 用绝对值计算阈值, 完美兼容正负数 utility
+        # max_util<0 时 max_util*ratio 会比 max_util 还高, 导致最优解被自己踢掉
+        threshold = max_util - abs(max_util) * (1.0 - self.pareto_utility_ratio)
 
         filtered = [
             s for s in solutions
@@ -292,6 +294,8 @@ class OracleDataGenerator:
         perturbed_q[:, 1] = np.clip(perturbed_q[:, 1], 0, self._area_h)
         perturbed_q[:, 2] = np.clip(perturbed_q[:, 2], self._H_min, self._H_max)
 
+        delta_q_perturbed = perturbed_q - q_current
+
         # 不传 perfect A/P — 否则 SCA-FP 的 Q 子问题退化为凸优化, 2 步内收敛
         # 传零初始化 → 迫使求解器在联合空间重新寻优 → 真正测试盆地宽度
         warm_start = {
@@ -342,6 +346,13 @@ class OracleDataGenerator:
                     if s.utility < solutions[0].utility - 0.01:
                         worst_valid = s
                         break
+                # 检测 15m 墙退化: 若所有 restart 撞同一面约束墙,
+                # worst ≈ best → DPO pair 无偏好信号 → 回退到启发式陷阱
+                if np.allclose(worst_valid.Q, solutions[0].Q, atol=0.5):
+                    delta_q = self._construct_heuristic_rejected(
+                        env_dict, q_current, rng,
+                    )
+                    return delta_q, baseline_util
                 delta_q = self._clip_to_physics_bounds(
                     worst_valid.Q - q_current, q_current,
                 )
