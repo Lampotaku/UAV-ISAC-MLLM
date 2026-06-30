@@ -139,32 +139,17 @@ class OracleDataGenerator:
         # 按效用排序
         solutions.sort(key=lambda s: s.utility, reverse=True)
 
-        # Step 3: Pareto 过滤
-        baseline_util = self._compute_baseline_utility(env_dict)
-        candidates = self._pareto_filter(solutions, baseline_util)
-        if len(candidates) < 2:
-            # 不足 2 个候选 → 环境缺乏偏好信号, 丢弃
+        # Step 3: Pareto 过滤 (仅 utility ratio 门 — 15m 墙下 baseline 检查会误杀)
+        candidates = self._pareto_filter(solutions)
+        if len(candidates) < 1:
             return None, []
 
-        # Step 4: 微扰回弹测试 → 选 Chosen
-        top_k = min(self.snapback_top_k, len(candidates))
-        snapback_candidates = candidates[:top_k]
+        # Step 4: 选 Chosen (15m 墙下 snapback 无区分度 → 直取效用最高)
+        chosen_sol = candidates[0]
 
-        snapback_iters = []
-        for cand_idx, cand in enumerate(snapback_candidates):
-            seed_offset = sample_id * 1000 + cand_idx * 10
-            iters = self._run_snapback_test(
-                env_dict, cand, self.snapback_epsilon, seed_offset,
-            )
-            snapback_iters.append((iters, cand))
-
-        # 迭代步数最少者当选 Chosen (盆地最宽)
-        snapback_iters.sort(key=lambda x: x[0])
-        chosen_iters, chosen_sol = snapback_iters[0]
-
-        # Step 5: 构造 Rejected (同时获取 rejected utility 用于 gap 估计)
+        # Step 5: 构造 Rejected
         rejected_delta_q, rejected_util = self._construct_rejected(
-            env_dict, solutions, q_current, sample_id, baseline_util,
+            env_dict, solutions, q_current, sample_id,
         )
 
         # Step 6: 构造输出
@@ -185,7 +170,6 @@ class OracleDataGenerator:
             "delta_q": delta_q_chosen.tolist(),
             "delta_a": delta_a_chosen.tolist(),
             "delta_p": delta_p_chosen.tolist(),
-            "snapback_iters": chosen_iters,
         }
 
         # DPO 样本 — 单个对: Chosen vs Rejected
@@ -194,8 +178,11 @@ class OracleDataGenerator:
             sample_id, rejected_delta_q, delta_a_chosen, delta_p_chosen,
         )
 
-        # Gap = chosen utility - rejected utility (≈ rejected_util 或 baseline)
-        gap = float(chosen_sol.utility) - rejected_util
+        # Gap: 启发式陷阱 → 保守估计 5% gap; SCA-FP 次优解 → 实际 gap
+        if rejected_util is not None:
+            gap = float(chosen_sol.utility) - rejected_util
+        else:
+            gap = abs(float(chosen_sol.utility)) * 0.05
 
         # 如果 Rejected δ_q 在物理上退化为 Chosen → 丢弃
         if np.allclose(rejected_delta_q, delta_q_chosen, atol=1e-3):
@@ -210,7 +197,6 @@ class OracleDataGenerator:
                 "rejected": rejected_response,
                 "utility_chosen": float(chosen_sol.utility),
                 "utility_gap": gap,
-                "snapback_iters_chosen": chosen_iters,
                 "q_current": q_current.tolist(),
                 "delta_q": delta_q_chosen.tolist(),
                 "delta_a": delta_a_chosen.tolist(),
@@ -225,12 +211,12 @@ class OracleDataGenerator:
     # ═══════════════════════════════════════════════════════════════
 
     def _pareto_filter(
-        self, solutions: List[SCAFPSolution], baseline_util: float,
+        self, solutions: List[SCAFPSolution],
     ) -> List[SCAFPSolution]:
         """
         Pareto 过滤:
-          1. 丢弃 utility < baseline 的解
-          2. 丢弃 utility < max_utility × pareto_utility_ratio 的劣质坑
+          丢弃 utility < max_utility × pareto_utility_ratio 的劣质坑
+          (15m 墙下 baseline [0,0,0] 与最优解收敛到同一点 → 不设 baseline 门)
         """
         if not solutions:
             return []
@@ -242,7 +228,7 @@ class OracleDataGenerator:
 
         filtered = [
             s for s in solutions
-            if s.utility > baseline_util and s.utility >= threshold
+            if s.utility >= threshold
         ]
         return filtered
 
@@ -319,8 +305,7 @@ class OracleDataGenerator:
         solutions: List[SCAFPSolution],
         q_current: np.ndarray,
         sample_id: int,
-        baseline_util: float,
-    ) -> Tuple[np.ndarray, float]:
+    ) -> Tuple[np.ndarray, Optional[float]]:
         """
         Rejected δ_q 混合构造:
           - ~70%: SCA-FP 次优解的 δ_q (效用最低的有效解)
@@ -328,7 +313,7 @@ class OracleDataGenerator:
         所有 Rejected 必须通过 clip_to_physics_bounds 投影。
 
         Returns:
-            (delta_q, utility_estimate): Rejected 的 δ_q 和其近似 utility
+            (delta_q, utility_or_none): utility=None 表示启发式陷阱 (保守估计)
         """
         rng = np.random.RandomState(sample_id * 777 + 13)
 
@@ -336,7 +321,7 @@ class OracleDataGenerator:
             delta_q = self._construct_heuristic_rejected(
                 env_dict, q_current, rng,
             )
-            return delta_q, baseline_util
+            return delta_q, None  # 启发式陷阱: 效用无解析值
         else:
             # SCA-FP 次优解 — 取效用最低的有效解
             if len(solutions) >= 2:
@@ -352,7 +337,7 @@ class OracleDataGenerator:
                     delta_q = self._construct_heuristic_rejected(
                         env_dict, q_current, rng,
                     )
-                    return delta_q, baseline_util
+                    return delta_q, None
                 delta_q = self._clip_to_physics_bounds(
                     worst_valid.Q - q_current, q_current,
                 )
@@ -362,7 +347,7 @@ class OracleDataGenerator:
                 delta_q = self._construct_heuristic_rejected(
                     env_dict, q_current, rng,
                 )
-                return delta_q, baseline_util
+                return delta_q, None
 
     def _construct_heuristic_rejected(
         self, env_dict: Dict, q_current: np.ndarray,
