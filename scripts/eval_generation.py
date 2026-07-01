@@ -35,6 +35,7 @@ del _os
 import os
 import sys
 import json
+import copy
 import yaml
 import argparse
 import torch
@@ -292,14 +293,20 @@ def run_generation_eval(model, cfg, n_samples: int = 5, n_scafp: int = 100):
         # Baseline: 真实 q_current
         ws1 = model.generate_warmstart(prompt, q_current=q_current.clone())
 
-        # 干扰 1: q_current + 10m 随机偏移
+        # 干扰 1: q_current + 10m 随机偏移 → 必须重建 prompt!
         q_shifted = q_current.clone()
         q_shifted[:, :2] += torch.randn_like(q_shifted[:, :2]) * 10.0
-        ws2 = model.generate_warmstart(prompt, q_current=q_shifted)
+        env_shifted = copy.deepcopy(env)
+        env_shifted.q_current = q_shifted.numpy()
+        prompt_shifted = build_full_prompt(env_shifted, sim_cfg)
+        ws2 = model.generate_warmstart(prompt_shifted, q_current=q_shifted)
 
-        # 干扰 2: 相同 prompt, 但所有 UAV 位置归零
+        # 干扰 2: 所有 UAV 位置归零 → 必须重建 prompt!
         q_zero = torch.zeros_like(q_current)
-        ws3 = model.generate_warmstart(prompt, q_current=q_zero)
+        env_zero = copy.deepcopy(env)
+        env_zero.q_current = q_zero.numpy()
+        prompt_zero = build_full_prompt(env_zero, sim_cfg)
+        ws3 = model.generate_warmstart(prompt_zero, q_current=q_zero)
 
         print(f"\n--- Sample {i+1} (Control Sensitivity) ---")
         print(f"q_current norm: {q_current.norm().item():.1f}")
