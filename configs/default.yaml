@@ -20,17 +20,16 @@ training:
   seed: 42
   # Stage I: SFT
   sft:
-    epochs: 3
+    epochs: 2                    # 🔧 烟雾测试: 2 (生产: 3)
     per_device_batch_size: 2          # bs=2: CE fp32 梯度 ~8GB, 峰值 ~70GB — 96GB 安全 (闲置 38GB 利用)
-    gradient_accumulation_steps: 8    # 有效 batch = 2×8 = 16 (数学等价于 bs=4×4, bs=1×16)
+    gradient_accumulation_steps: 1    # 🔧 烟雾测试: 1 (生产: 8)
     learning_rate: 2.0e-4
     lr_scheduler: "cosine"
     warmup_ratio: 0.03
     weight_decay: 0.01
     max_seq_length: 3456             # 128-aligned, 包容最大样本 3329 + 8 ctrl tokens, 砍 4096→3456 省 ~40% 注意力计算
-    save_steps: 50                     # Phase 1 省钱版: 50 步一存 → 捕获 50/100/150/200/250
-                                       # Phase 2 之后改回 200
-    logging_steps: 5
+    save_steps: 25                     # 🔧 烟雾测试: 25 (200条数据跑得快)
+    logging_steps: 1                  # 🔧 烟雾测试: 1
 
     # Phase 1: CTL-only warmup (控制表示预训练)
     # 完全关闭 CE loss，强制 LoRA 学会将环境信息编码到 control token。
@@ -136,7 +135,7 @@ data:
 
   # 数据输出
   output_dir: "/root/autodl-tmp/data/cache"
-  sft_file: "sft_dataset.jsonl"
+  sft_file: "sft_smoke.jsonl"       # 🔧 烟雾测试: 200条 (生产: sft_dataset.jsonl)
   dpo_file: "dpo_dataset.jsonl"       # 全量 19,925 偏好对
 
 # ---- 评估 ----
