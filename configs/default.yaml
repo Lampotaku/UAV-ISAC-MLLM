@@ -54,7 +54,7 @@ training:
     beta: 0.1                    # DPO temperature (论文值)
     mu: 0.05                     # SFT anchor 系数 (防遗忘)
     max_seq_length: 3456             # 128-aligned, 同 SFT
-    save_steps: 5                     # 🔧 烟雾测试: 5 (生产: 200)
+    save_steps: 50                    # 🔧 烟雾测试: 50 (生产: 200)
     logging_steps: 1                  # 🔧 烟雾测试: 1 (生产: 10)
 
 # ---- 模型 ----
