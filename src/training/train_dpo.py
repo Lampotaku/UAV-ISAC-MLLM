@@ -65,6 +65,7 @@ if hasattr(inductor_config, "use_flex_attention"):
 
 from transformers import get_cosine_schedule_with_warmup, set_seed
 from accelerate import Accelerator
+from tqdm import tqdm
 import json
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -319,7 +320,8 @@ def train_stage2(
         total_batches = len(dpo_dataloader)
         logger.info(f"=== DPO Epoch {epoch+1}/{train_cfg['epochs']}  ({total_batches} batches) ===")
 
-        for batch_idx, batch in enumerate(dpo_dataloader):
+        progress = tqdm(dpo_dataloader, desc=f"DPO E{epoch+1}", unit="batch", ncols=100)
+        for batch_idx, batch in enumerate(progress):
             with accelerator.accumulate(model):
                 # === Chosen 前向传播 ===
                 outputs_chosen = model(
@@ -446,11 +448,15 @@ def train_stage2(
             if accelerator.sync_gradients:
                 global_step += 1
 
-                if global_step % train_cfg["logging_steps"] == 0:
-                    # 逐行打印, 方便复制粘贴 — 不用 tqdm 动态刷新
-                    parts = [f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}" for k, v in metrics.items()]
-                    logger.info(f"[Step {global_step:5d}]  {', '.join(parts)}")
-                    accelerator.log(metrics, step=global_step)
+                # 每个 step 逐行打印 metrics (可复制) + tqdm 动态进度条保留
+                parts = [f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}" for k, v in metrics.items()]
+                tqdm.write(f"[Step {global_step:5d}]  {', '.join(parts)}")
+                accelerator.log(metrics, step=global_step)
+                # 同步更新进度条 postfix
+                short = {k: f"{v:.3f}" if isinstance(v, float) else v
+                         for k, v in metrics.items()
+                         if k in ("loss_dpo", "loss_ctl")}
+                progress.set_postfix(short)
 
                 if global_step % train_cfg["save_steps"] == 0:
                     ckpt_path = os.path.join(checkpoint_dir, f"stage2_step_{global_step}")
