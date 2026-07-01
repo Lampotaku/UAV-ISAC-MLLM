@@ -473,7 +473,8 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None, resume_from: 
                 if phase1_step % train_cfg["save_steps"] == 0 or phase1_step == phase1_max_steps:
                     ckpt_path = os.path.join(checkpoint_dir, f"phase1_step_{phase1_step}")
                     accelerator.unwrap_model(model).save_pretrained(ckpt_path)
-                    logger.info(f"Phase 1 checkpoint saved to {ckpt_path} (sens={phase1_sensitivity:.4f})")
+                    sens_str = f"{phase1_sensitivity:.4f}" if phase1_sensitivity is not None else "N/A"
+                    logger.info(f"Phase 1 checkpoint saved to {ckpt_path} (sens={sens_str})")
 
         phase1_pbar.close()
 
@@ -481,7 +482,8 @@ def train_stage1(config_path: str, data_dir: Optional[str] = None, resume_from: 
         if phase1_step % train_cfg["save_steps"] != 0 and phase1_step < phase1_max_steps:
             ckpt_path = os.path.join(checkpoint_dir, f"phase1_step_{phase1_step}")
             accelerator.unwrap_model(model).save_pretrained(ckpt_path)
-            logger.info(f"Phase 1 final checkpoint saved to {ckpt_path} (sens={phase1_sensitivity:.4f})")
+            sens_str = f"{phase1_sensitivity:.4f}" if phase1_sensitivity is not None else "N/A"
+            logger.info(f"Phase 1 final checkpoint saved to {ckpt_path} (sens={sens_str})")
 
         if phase1_step >= phase1_max_steps:
             logger.warning(
