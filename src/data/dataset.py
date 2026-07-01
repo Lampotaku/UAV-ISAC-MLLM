@@ -193,12 +193,13 @@ class DPODataset(Dataset):
     def _encode_pair(self, prompt: str, response: str):
         """单个 prompt-response 对 tokenization (委托给共享 _tokenize_pair)
 
-        DPO 全量覆盖: δ_q/δ_a/δ_p 全部参与偏好学习, 不做字段遮蔽。
-        之前 Masked DPO 只训 δ_q 导致 δ_a/δ_p 坍塌为 SFT 常数。
+        Masked DPO: 将 δ_a 和 δ_p 对应 token 的 label 设为 -100,
+        梯度集中在 δ_q 的偏好拉扯上, 避免量纲冲突导致梯度爆炸。
         """
         return _tokenize_pair(
             self.tokenizer, prompt, response,
             self.control_token_ids, self.max_length, self.num_control_tokens,
+            mask_fields=["delta_a", "delta_p"],
         )
 
     def __getitem__(self, idx):
