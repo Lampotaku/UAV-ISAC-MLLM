@@ -47,15 +47,15 @@ training:
   dpo:
     epochs: 2
     per_device_batch_size: 1          # bs=1 → 双模型48GB + 4×logits(fp32) 15GB ≈ 63GB; backward≈12GB → 峰值~75GB (bs=2 会OOM)
-    gradient_accumulation_steps: 16   # 有效 batch = 1×16 = 16
+    gradient_accumulation_steps: 1    # 🔧 烟雾测试: 1 (生产: 16)
     learning_rate: 5.0e-5
     lr_scheduler: "cosine"
     warmup_ratio: 0.03
     beta: 0.1                    # DPO temperature (论文值)
     mu: 0.05                     # SFT anchor 系数 (防遗忘)
     max_seq_length: 3456             # 128-aligned, 同 SFT
-    save_steps: 200
-    logging_steps: 10
+    save_steps: 5                     # 🔧 烟雾测试: 5 (生产: 200)
+    logging_steps: 1                  # 🔧 烟雾测试: 1 (生产: 10)
 
 # ---- 模型 ----
 model:
@@ -137,7 +137,7 @@ data:
   # 数据输出
   output_dir: "/root/autodl-tmp/data/cache"
   sft_file: "sft_dataset.jsonl"
-  dpo_file: "dpo_dataset.jsonl"
+  dpo_file: "dpo_smoke.jsonl"       # 🔧 烟雾测试: smoke (生产: dpo_dataset.jsonl)
 
 # ---- 评估 ----
 eval:
