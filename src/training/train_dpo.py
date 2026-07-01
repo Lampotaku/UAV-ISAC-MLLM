@@ -65,7 +65,6 @@ if hasattr(inductor_config, "use_flex_attention"):
 
 from transformers import get_cosine_schedule_with_warmup, set_seed
 from accelerate import Accelerator
-from tqdm import tqdm
 import json
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -317,9 +316,10 @@ def train_stage2(
         logger.info(f"Grad norm diag: {len(lora_params)} LoRA tensors")
 
     for epoch in range(train_cfg["epochs"]):
-        progress = tqdm(dpo_dataloader, desc=f"DPO Epoch {epoch+1}/{train_cfg['epochs']}")
+        total_batches = len(dpo_dataloader)
+        logger.info(f"=== DPO Epoch {epoch+1}/{train_cfg['epochs']}  ({total_batches} batches) ===")
 
-        for batch in progress:
+        for batch_idx, batch in enumerate(dpo_dataloader):
             with accelerator.accumulate(model):
                 # === Chosen 前向传播 ===
                 outputs_chosen = model(
@@ -447,7 +447,9 @@ def train_stage2(
                 global_step += 1
 
                 if global_step % train_cfg["logging_steps"] == 0:
-                    progress.set_postfix(metrics)
+                    # 逐行打印, 方便复制粘贴 — 不用 tqdm 动态刷新
+                    parts = [f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}" for k, v in metrics.items()]
+                    logger.info(f"[Step {global_step:5d}]  {', '.join(parts)}")
                     accelerator.log(metrics, step=global_step)
 
                 if global_step % train_cfg["save_steps"] == 0:
