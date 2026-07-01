@@ -15,12 +15,14 @@
 
 - ✅ 全部源码完成，7 轮审查闭合 + 一审修复闭合
 - ✅ GitHub 私有仓库: `Lampotaku/UAV-ISAC-MLLM`
-- ✅ 5000 环境数据生成完成 (SFT: 5000, DPO: 186,896, 0 issues)
-- ✅ OOM #1-5 修复闭合 (省 ~54 GB, 详见 postmortem)
+- ✅ 20,000 环境数据重生完成 (SFT: 19,925, DPO: 19,925, 3.98h, 99.6% yield)
+- ✅ Top-5000 质量闸门通过 (cutoff gap 43.9, median 66.9)
+- ✅ 5 Bug 修复闭合 (负数阈值 / baseline 误杀 / DPO 退化 / snapback 浪费)
+- ✅ 算力优化: 14→3 SCA-FP/env (节省 79%)
 - ✅ Plan A: 纯 PyTorch CE + SDPA, 0 Unsloth 引用
 - ✅ 终极配置: bs=2, grad_accum=8, seq=3456, bf16 全精度
-- 🟢 **Stage I SFT 训练进行中** (~4.1s/step, ~76GB/96GB, ~8.7h total)
-- ⏳ Stage II DPO → 评估
+- ✅ Stage I SFT 训练完成 (step 150 最佳 checkpoint)
+- 🟢 **Stage II Masked DPO 待点火** (~5-10h)
 
 ## 关键环境信息
 

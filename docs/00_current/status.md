@@ -1,14 +1,14 @@
 ---
 type: status
 status: current
-stage: code_complete
-last_updated: 2026-06-29
-related: [data_degeneracy, oom_incidents, adr_006_data_regeneration, CONTEXT.md, implementation_2026-06-29]
+stage: dpo_ready
+last_updated: 2026-07-01
+related: [data_degeneracy, oom_incidents, adr_006_data_regeneration, CONTEXT.md, implementation_2026-06-29, session_2026-07-01]
 ---
 
 # 项目当前状态
 
-**最后更新**: 2026-06-29 | **阶段**: ✅ 代码落地 — Grilling 终稿全线实现 → 等待服务器执行
+**最后更新**: 2026-07-01 | **阶段**: 🟢 20K 数据生成完成 + Top-5000 精选完毕 → DPO 训练即将点火
 
 ## 🔴 核心发现：数据退化 — 项目最致命的阿喀琉斯之踵
 
@@ -160,72 +160,92 @@ SCAFPConfig.ground_clutter_db: 0.0 → 12.0  (commit f34129c)
 
 详见 [implementation_2026-06-29.md](../02_training_log/implementation_2026-06-29.md)
 
-## ⏭️ 下一步行动 (2026-06-29 Grilling 终稿)
+## 📦 2026-07-01 Session — 数据重生执行全纪录
 
-### 步骤 0：ε 标定 — Pilot Sweep (5 min)
+### 执行摘要
 
-在全量数据前，先跑微扰步长标定。ε 决定了微扰回弹测试测的是"盆地内壁"还是"跨山脊"。
+| 阶段 | 状态 | 耗时 | 关键指标 |
+|------|------|------|----------|
+| ε 标定 | ✅ (诊断完成) | ~5 min | 发现 15m 墙 — 所有 ε variance=0 |
+| Bug 狩猎 | ✅ 5 个修复 | — | 负数阈值 / 变量缺失 / baseline 误杀 / DPO 退化 / snapback 浪费 |
+| 算力优化 | ✅ 14→3 SCA-FP/env | — | 节省 79% 算力，质量零损失 |
+| 200-env Dry Run | ✅ | ~2 min | 100% yield, 0 issues |
+| 20K 全量生成 | ✅ | 3.98h | 19,925 SFT + 19,925 DPO (99.6% yield) |
+| Top-5000 质量闸门 | ✅ | ~5s | cutoff gap 43.9, median 66.9 |
+| **DPO 训练** | **🟢 待点火** | ~5-10h | — |
+
+详见 [session_2026-07-01.md](../02_training_log/session_2026-07-01.md)。
+
+### 关键发现：15m 速度墙
+
+在 1000×1000m 区域、v_max=15m/s 约束下，SCA-FP 的最优解在所有 restart 中收敛到同一个硬约束边界点：
+- **Snap-back 测试失效**: 所有 ε 的方差 = 0 → 从 `_process_one_environment` 移除
+- **Baseline 检查误杀**: [0,0,0] 与 best-of-N 收敛到同一点 → 80% envs 被丢弃 → 从 `_pareto_filter` 移除
+- **DPO 对退化**: worst ≈ best (allclose atol=0.5) → 启发式物理陷阱替代
+- **Restart 冗余**: 10→3 次，70% 算力节省，数据质量不变
+
+### 5 个 Bug 修复 (commits `f9c968b` → `4fc398d`)
+
+| # | Bug | 症状 | 修复 |
+|---|-----|------|------|
+| 13 | 负数 utility Pareto 灾难 | 39/50 envs 被误杀 | `max - abs(max) × (1-ratio)` |
+| 14 | `delta_q_perturbed` 未定义 | NameError (已预防) | 补全赋值 |
+| 15 | Baseline 检查误杀 | 80% envs 丢弃 | 从 `_pareto_filter` 移除 |
+| 16 | DPO Chosen≈Rejected | 偏好信号为零 | 退化检测 → 启发式陷阱 |
+| 17 | Snapback 无区分度 | 0 variance, 浪费 3 calls/env | 从主流程移除 |
+
+### 当前数据
+
+```
+/root/autodl-tmp/data/cache/
+├── sft_dataset.jsonl      19,925 条 (SFT)
+├── dpo_dataset.jsonl      19,925 条 (全量 DPO — 建议备份)
+├── dpo_top5000.jsonl       5,000 条 (质量闸门精选)
+├── dpo_top5000.jsonl.report  统计摘要
+└── checkpoint.txt          进度记录
+```
+
+## ⏭️ 下一步行动 (2026-07-01)
+
+### 步骤 1：替换 DPO 训练文件
 
 ```bash
 cd /root/UAV-ISAC-MLLM && git pull
-conda activate uavmllm
-python scripts/calibrate_epsilon.py
+cd /root/autodl-tmp/data/cache
+# 方案 A: 直接 mv (简单粗暴)
+cp dpo_dataset.jsonl dpo_dataset_full.jsonl   # 留底
+mv dpo_top5000.jsonl dpo_dataset.jsonl
+# 方案 B: 改 config 一行 (推荐)
+sed -i 's|dpo_file: "dpo_dataset.jsonl"|dpo_file: "dpo_top5000.jsonl"|' /root/UAV-ISAC-MLLM/configs/default.yaml
 ```
 
-对 50 个环境测试 ε ∈ {0.5, 1.0, 2.0, 4.0, 8.0}m，选回弹步数区分度最大的值。预期最佳：1.0-2.5m。
-
-### 步骤 1：快速验证求解器修复 (2 min)
+### 步骤 2：DPO 训练点火 (~5-10h)
 
 ```bash
-python scripts/quick_validate_fix.py
-```
-
-验收标准：满速 < 40%，微调 > 10%，**上升 > 15%（红线）**。
-
-### 步骤 2：全量数据暴力生成 (~2-3h, 70 workers)
-
-**注意：生成 20,000 环境（非 5,000），后续 Top-K 精选 5,000。**
-
-每个环境执行：10 次 Random Restart → Pareto 过滤 → Top-3 候选 → 微扰回弹测试 → Chosen/Rejected 构造。所有 Rejected 经 `clip_to_physics_bounds` 约束投影。
-
-```bash
-python scripts/generate_data.py \
-    --num-envs 20000 --num-restarts 10 \
-    --output-dir /root/autodl-tmp/data/full20000_v2 \
-    --num-workers 70
-```
-
-### 步骤 3：质量闸门 → Top-5000 精选
-
-按 Chosen-Rejected Composite Score Gap 排序，取前 5,000 名。
-
-```bash
-python scripts/eda_data.py --data-dir /root/autodl-tmp/data/full20000_v2
-```
-
-EDA Section 3 三条红线全部通过后才进入训练。
-
-### 步骤 4：Masked DPO 训练 (~5-10h)
-
-在 `dataset.py` 中实施 token-span-level masking：JSON 中 δ_a 和 δ_p 对应 token 的 label 设为 `-100`，DPO 自动跳过。梯度只集中在 δ_q 的偏好拉扯上。
-
-```bash
+tmux new -s dpo_train
 python src/training/train_dpo.py \
     --config configs/default.yaml \
     --stage1_ckpt /root/autodl-tmp/checkpoints/stage1_step_150 \
-    --data_dir /root/autodl-tmp/data/full20000_v2
+    --data_dir /root/autodl-tmp/data/cache
 ```
 
-预期 VRAM: ~65-75 GB / 96 GB (bs=1, 双模型)。
+**监控要点**:
+| 指标 | 健康 | 危险 |
+|------|------|------|
+| `loss_ctl / loss_dpo` | 2~3× | >10× → `lambda_ctl` 砍半到 0.25 |
+| `loss_dpo` | 缓慢下降 | 迅速→0 (CTL 在绞杀 DPO) |
+| VRAM | ~65-75 GB | >90 GB |
 
-### 步骤 5：评估
+### 步骤 3：评估 (~30 min)
 
 ```bash
 python scripts/eval_generation.py \
     --config configs/default.yaml \
-    --checkpoint <dpo_checkpoint> \
+    --checkpoint /root/autodl-tmp/checkpoints/stage2_dpo_step_XXX \
     --n_samples 3 --n_scafp 100
 ```
+
+**验收标准**: SCA-FP 加速比 > 1.5×（论文核心贡献立住）。
 
 ## 🃏 DPO 若也失败：三级后备方案
 
@@ -250,7 +270,7 @@ python scripts/eval_generation.py \
 9. **Unsloth 不存在"局部借用"**：即使是 `import` 在函数体内、仅用于独立 kernel，Unsloth 仍然全局 monkey-patch。与 Gemma 3 + SDPA + grad checkpoint 不可共存。
 10. **奥卡姆剃刀优先**：在能解决问题的前提下不增加复杂度。先修数据 → 再换训练方法 → 最后改架构。
 
-## 📋 快速命令参考
+## 📋 快速命令参考 (2026-07-01 更新)
 
 ```bash
 # 服务器登录后
@@ -258,31 +278,24 @@ cd /root/UAV-ISAC-MLLM && git pull
 conda activate uavmllm
 export TORCHINDUCTOR_FLEX_ATTENTION=0
 
-# 第 0 步：ε 标定 (5 min)
-python scripts/calibrate_epsilon.py
+# 第 0 步：质量闸门 (已完成 ✅)
+# python scripts/select_top5000.py \
+#     --input /root/autodl-tmp/data/cache/dpo_dataset.jsonl \
+#     --output /root/autodl-tmp/data/cache/dpo_top5000.jsonl --top 5000
 
-# 第 1 步：快速验证求解器修复 (2 min)
-python scripts/quick_validate_fix.py
+# 第 1 步：替换 DPO 文件
+sed -i 's|dpo_file: "dpo_dataset.jsonl"|dpo_file: "dpo_top5000.jsonl"|' configs/default.yaml
 
-# 第 2 步：全量数据重生 (20,000 环境, ~2-3h)
-# 用第 0 步确定的 ε 替换 <EPSILON>
-python scripts/generate_data.py \
-    --num-envs 20000 --num-restarts 10 \
-    --snapback-epsilon <EPSILON> --workers 70 \
-    --output-dir /root/autodl-tmp/data/full20000_v2
-
-# 第 3 步：EDA 验收 + Top-5000 精选
-python scripts/eda_data.py --data-dir /root/autodl-tmp/data/full20000_v2
-
-# 第 4 步：Masked DPO 训练 (5-10h)
+# 第 2 步：DPO 训练 (5-10h)
+tmux new -s dpo_train
 python src/training/train_dpo.py \
     --config configs/default.yaml \
     --stage1_ckpt /root/autodl-tmp/checkpoints/stage1_step_150 \
-    --data_dir /root/autodl-tmp/data/full20000_v2
+    --data_dir /root/autodl-tmp/data/cache
 
-# 第 5 步：评估
+# 第 3 步：评估 — 拿到加速比
 python scripts/eval_generation.py \
     --config configs/default.yaml \
-    --checkpoint <dpo_checkpoint> \
+    --checkpoint <dpo_checkpoint_path> \
     --n_samples 3 --n_scafp 100
 ```
